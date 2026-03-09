@@ -13,7 +13,7 @@
 # Set PROG to the name of your implementation's binary (e.g., cgc_mpi)
 PROG=cgc_mpi
 DATA=/var/scratch/bwn200/HPC_data/spring_data_xl.npy
-LABELS=/var/scratch/bwn200/HPC_data/spring_labels_xl_5x100.txt
+LABELS=/var/scratch/bwn200/HPC_data/spring_labels_xl_3x20.txt
 OUT=labels_${SLURM_JOB_ID}.txt
 
 # Load required modules
