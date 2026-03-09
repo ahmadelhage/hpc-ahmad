@@ -3,7 +3,7 @@
 #SBATCH --job-name=hpc          # Job name
 #SBATCH --output=job_%j.out     # Output file (%j = SLURM job ID)
 #SBATCH --error=job_%j.err      # Error file
-#SBATCH --nodes=4               # Number of nodes (modifiy for MPI)
+#SBATCH --nodes=1               # Number of nodes (modifiy for MPI)
 #SBATCH --ntasks-per-node=1     # Number of tasks per node
 #SBATCH --cpus-per-task=1       # Number of threads per task (modify for multithreading)
 #SBATCH --gres=gpu:A4000-Ada:1  # Number of GPUs per node
