@@ -7,7 +7,7 @@
 #SBATCH --ntasks-per-node=1     # Number of tasks per node
 #SBATCH --cpus-per-task=1       # Number of threads per task (modify for multithreading)
 #SBATCH --gres=gpu:A4000-Ada:1  # Number of GPUs per node
-#SBATCH --time=01:00:00         # Time limit (HH:MM:SS). Do not exceed 15 minutes! Changed temporarily for testing during off peak hours.
+#SBATCH --time=01:30:00         # Time limit (HH:MM:SS). Do not exceed 15 minutes! Changed temporarily for testing during off peak hours.
 #SBATCH --nice=100              # Job priority (allow higher priority jobs first)
 
 # Set PROG to the name of your implementation's binary (e.g., cgc_mpi)
