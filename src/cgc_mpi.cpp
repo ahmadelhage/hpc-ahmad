@@ -316,7 +316,6 @@ int main(int argc, const char* argv[]) {
     int num_row_labels = 0, num_col_labels = 0;
     int max_iter = 0;
 
-    auto before = std::chrono::high_resolution_clock::now();
 
 // Only the process with rank 0 will read the input and perform the clustering
     if(rank == 0) {    
