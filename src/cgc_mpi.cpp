@@ -304,6 +304,10 @@ int main(int argc, const char* argv[]) {
     MPI_Comm_rank(MPI_COMM_WORLD, &rank);
     MPI_Comm_size(MPI_COMM_WORLD, &nprocs);
 
+    // Start wall clock timer
+    auto wall_start = std::chrono::high_resolution_clock::now();
+
+
 
     std::string output_file;
     std::vector<float> matrix;
@@ -370,7 +374,7 @@ int main(int argc, const char* argv[]) {
     on the number of columns they will handle*/
     MPI_Scatterv(
     (rank == 0) ? col_labels.data() : nullptr,
-    sendcounts.data(), displs.data(), MPI_INT,
+    ncolPerP.data(), disp.data(), MPI_INT,
     local_col_labels.data(), local_cols, MPI_INT,
     0, MPI_COMM_WORLD);
 
