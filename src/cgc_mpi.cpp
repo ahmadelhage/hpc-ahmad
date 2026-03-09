@@ -387,7 +387,7 @@ int main(int argc, const char* argv[]) {
     for (int i = 0; i < num_rows; i++) {
         const float* row_src = (rank == 0) ? (matrix.data() + i * num_cols) : nullptr;
         float*       row_dst = local_matrix.data() + i * local_cols;
-        MPI_Scatterv(row_src, sendcounts.data(), displs.data(), MPI_FLOAT,
+        MPI_Scatterv(row_src, ncolPerP.data(), disp.data(), MPI_FLOAT,
                     row_dst, local_cols, MPI_FLOAT,
                     0, MPI_COMM_WORLD);
     }
@@ -413,7 +413,7 @@ int main(int argc, const char* argv[]) {
     MPI_Gatherv(
         local_col_labels.data(), local_cols, MPI_INT,
         (rank == 0) ? col_labels.data() : nullptr,
-        sendcounts.data(), displs.data(), MPI_INT,
+        ncolPerP.data(), disp.data(), MPI_INT,
         0, MPI_COMM_WORLD);
 
     // Write resulting labels to output file (only by rank 0)
