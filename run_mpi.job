@@ -4,7 +4,7 @@
 #SBATCH --output=job_%j.out     # Output file (%j = SLURM job ID)
 #SBATCH --error=job_%j.err      # Error file
 #SBATCH --nodes=8               # Number of nodes (modifiy for MPI)
-#SBATCH --ntasks-per-node=4     # Number of tasks per node
+#SBATCH --ntasks-per-node=8     # Number of tasks per node
 #SBATCH --cpus-per-task=1       # Number of threads per task (modify for multithreading)
 #SBATCH --gres=gpu:A4000-Ada:1  # Number of GPUs per node
 #SBATCH --time=00:15:00         # Time limit (HH:MM:SS). Do not exceed 15 minutes! Changed temporarily for testing during off peak hours.
