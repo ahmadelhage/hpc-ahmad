@@ -1,12 +1,8 @@
 #include <chrono>
 #include <iostream>
-#include <vector>
 #include <limits>
 #include <mpi.h>
-
 #include "common.h"
-
-/* ---------------- CLUSTER AVERAGE ---------------- */
 
 std::vector<double> calculate_cluster_average(
     int num_rows,
@@ -15,48 +11,51 @@ std::vector<double> calculate_cluster_average(
     int num_col_labels,
     const float* local_matrix,
     const label_type* row_labels,
-    const label_type* local_col_labels) {
+    const label_type* local_col_labels)
+{
+    int num_clusters = num_row_labels * num_col_labels;
 
-    int K = num_row_labels * num_col_labels;
-
-    std::vector<double> sum(K, 0.0);
-    std::vector<int> count(K, 0);
+    std::vector<double> local_sum(num_clusters, 0.0);
+    std::vector<int>    local_count(num_clusters, 0);
 
     for (int i = 0; i < num_rows; i++) {
         for (int j = 0; j < local_cols; j++) {
 
             int r = row_labels[i];
             int c = local_col_labels[j];
-
             int idx = r * num_col_labels + c;
 
-            sum[idx] += local_matrix[i * local_cols + j];
-            count[idx] += 1;
+            local_sum[idx] += local_matrix[i * local_cols + j];
+            local_count[idx] += 1;
         }
     }
 
-    std::vector<double> gsum(K, 0.0);
-    std::vector<int> gcount(K, 0);
+    std::vector<double> global_sum(num_clusters, 0.0);
+    std::vector<int> global_count(num_clusters, 0);
 
-    MPI_Allreduce(sum.data(), gsum.data(), K, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
-    MPI_Allreduce(count.data(), gcount.data(), K, MPI_SUM, MPI_COMM_WORLD);
+    MPI_Allreduce(local_sum.data(), global_sum.data(),
+                  num_clusters, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
 
-    std::vector<double> avg(K, 0.0);
+    MPI_Allreduce(local_count.data(), global_count.data(),
+                  num_clusters, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
 
-    for (int i = 0; i < K; i++) {
-        avg[i] = (gcount[i] > 0) ? gsum[i] / gcount[i] : 0.0;
+    std::vector<double> cluster_avg(num_clusters, 0.0);
+
+    for (int i = 0; i < num_clusters; i++) {
+        if (global_count[i] > 0) {
+            cluster_avg[i] = global_sum[i] / (double)global_count[i];
+        } else {
+            cluster_avg[i] = 0.0; // IMPORTANT: no "prev avg" hack
+        }
     }
 
-    return avg;
+    return cluster_avg;
 }
 
-/* ---------------- DIST ---------------- */
-
-static inline double sq(double x) {
-    return x * x;
+double calculate_distance(double avg, double item) {
+    double d = avg - item;
+    return d * d;
 }
-
-/* ---------------- ROW UPDATE ---------------- */
 
 std::pair<int, double> update_row_labels(
     int num_rows,
@@ -66,33 +65,33 @@ std::pair<int, double> update_row_labels(
     const float* local_matrix,
     label_type* row_labels,
     const label_type* local_col_labels,
-    const double* avg) {
-
-    std::vector<double> dist(num_rows * num_row_labels, 0.0);
+    const double* cluster_avg)
+{
+    std::vector<double> local_dist(num_rows * num_row_labels, 0.0);
 
     for (int i = 0; i < num_rows; i++) {
         for (int k = 0; k < num_row_labels; k++) {
 
-            double s = 0.0;
+            double dist = 0.0;
 
             for (int j = 0; j < local_cols; j++) {
+                int c = local_col_labels[j];
+                int idx = k * num_col_labels + c;
 
-                double v = local_matrix[i * local_cols + j];
-
-                int idx = k * num_col_labels + local_col_labels[j];
-
-                s += sq(avg[idx] - v);
+                dist += calculate_distance(
+                    cluster_avg[idx],
+                    local_matrix[i * local_cols + j]
+                );
             }
 
-            dist[i * num_row_labels + k] = s;
+            local_dist[i * num_row_labels + k] = dist;
         }
     }
 
-    std::vector<double> gdist(num_rows * num_row_labels, 0.0);
+    std::vector<double> global_dist(num_rows * num_row_labels, 0.0);
 
-    MPI_Allreduce(dist.data(), gdist.data(),
-                  num_rows * num_row_labels,
-                  MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
+    MPI_Allreduce(local_dist.data(), global_dist.data(),
+                  num_rows * num_row_labels, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
 
     int changed = 0;
     double total = 0.0;
@@ -100,12 +99,12 @@ std::pair<int, double> update_row_labels(
     for (int i = 0; i < num_rows; i++) {
 
         int best = 0;
-        double bestv = gdist[i * num_row_labels];
+        double best_d = global_dist[i * num_row_labels];
 
         for (int k = 1; k < num_row_labels; k++) {
-            double v = gdist[i * num_row_labels + k];
-            if (v < bestv) {
-                bestv = v;
+            double d = global_dist[i * num_row_labels + k];
+            if (d < best_d) {
+                best_d = d;
                 best = k;
             }
         }
@@ -115,13 +114,11 @@ std::pair<int, double> update_row_labels(
             changed++;
         }
 
-        total += bestv;
+        total += best_d;
     }
 
     return {changed, total};
 }
-
-/* ---------------- COL UPDATE ---------------- */
 
 std::pair<int, double> update_col_labels(
     int num_rows,
@@ -130,31 +127,32 @@ std::pair<int, double> update_col_labels(
     const float* local_matrix,
     const label_type* row_labels,
     label_type* local_col_labels,
-    const double* avg) {
-
+    const double* cluster_avg)
+{
     int changed = 0;
     double total = 0.0;
 
     for (int j = 0; j < local_cols; j++) {
 
         int best = 0;
-        double bestv = std::numeric_limits<double>::infinity();
+        double best_d = std::numeric_limits<double>::infinity();
 
         for (int k = 0; k < num_col_labels; k++) {
 
-            double s = 0.0;
+            double dist = 0.0;
 
             for (int i = 0; i < num_rows; i++) {
+                int r = row_labels[i];
+                int idx = r * num_col_labels + k;
 
-                double v = local_matrix[i * local_cols + j];
-
-                int idx = row_labels[i] * num_col_labels + k;
-
-                s += sq(avg[idx] - v);
+                dist += calculate_distance(
+                    cluster_avg[idx],
+                    local_matrix[i * local_cols + j]
+                );
             }
 
-            if (s < bestv) {
-                bestv = s;
+            if (dist < best_d) {
+                best_d = dist;
                 best = k;
             }
         }
@@ -164,13 +162,11 @@ std::pair<int, double> update_col_labels(
             changed++;
         }
 
-        total += bestv;
+        total += best_d;
     }
 
     return {changed, total};
 }
-
-/* ---------------- DRIVER ---------------- */
 
 void cluster_mpi(
     int rank,
@@ -183,54 +179,66 @@ void cluster_mpi(
     const float* local_matrix,
     label_type* row_labels,
     label_type* local_col_labels,
-    int max_iter) {
+    int max_iterations)
+{
+    int iter = 0;
 
-    int it = 0;
+    auto start = std::chrono::high_resolution_clock::now();
 
-    while (it < max_iter) {
+    while (iter < max_iterations) {
 
-        auto avg = calculate_cluster_average(
+        auto cluster_avg = calculate_cluster_average(
             num_rows, local_cols,
             num_row_labels, num_col_labels,
             local_matrix,
             row_labels,
-            local_col_labels);
+            local_col_labels
+        );
 
-        auto [rchg, rdist] = update_row_labels(
+        auto [row_changed, dist_r] = update_row_labels(
             num_rows, local_cols,
             num_row_labels, num_col_labels,
             local_matrix,
             row_labels,
             local_col_labels,
-            avg.data());
+            cluster_avg.data()
+        );
 
-        auto [cchg, cdist] = update_col_labels(
+        auto [col_changed, dist_c] = update_col_labels(
             num_rows, local_cols,
             num_col_labels,
             local_matrix,
             row_labels,
             local_col_labels,
-            avg.data());
+            cluster_avg.data()
+        );
 
-        int global_c = 0;
-        MPI_Allreduce(&cchg, &global_c, 1, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
+        int global_changed = 0;
+        MPI_Allreduce(&col_changed, &global_changed, 1, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
 
-        double local_total = rdist + cdist;
-        double global_total = 0.0;
+        double global_dist_c = 0.0;
+        MPI_Allreduce(&dist_c, &global_dist_c, 1, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
 
-        MPI_Allreduce(&local_total, &global_total,
-                      1, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
+        double total_dist = dist_r + global_dist_c;
 
-        int changed = rchg + global_c;
+        iter++;
+
+        int total_changes = row_changed + global_changed;
 
         if (rank == 0) {
-            std::cout << "iter " << it
-                      << " changed=" << changed
-                      << " dist=" << global_total << "\n";
+            std::cout << "iter " << iter
+                      << " changes=" << total_changes
+                      << " dist=" << total_dist << "\n";
         }
 
-        if (changed == 0) break;
+        if (total_changes == 0) break;
+    }
 
-        it++;
+    auto end = std::chrono::high_resolution_clock::now();
+
+    if (rank == 0) {
+        std::cout << "time: "
+                  << std::chrono::duration<double>(end - start).count()
+                  << " sec\n";
     }
 }
