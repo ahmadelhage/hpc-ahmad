@@ -56,8 +56,10 @@ std::vector<double> calculate_cluster_average(
             } else {
                 cluster_avg[i] = prev_avg[i]; // Keep the previous average if count is zero
             }
+            }
             return cluster_avg;
-}
+
+    }
 
 double calculate_distance(double avg, double item) {
     double diff = (avg - item);
