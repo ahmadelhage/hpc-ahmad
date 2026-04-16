@@ -26,7 +26,7 @@ std::vector<double> calculate_cluster_average(
     // Each process calculates the sum and count for its local portion of the matrix
     for (int i = 0; i < num_rows; i++) {
         for (int j = 0; j < local_cols; j++) {
-            float item      = local_matrix[i * local_cols + j];
+            double item     = (double)local_matrix[i * local_cols + j];
             int   row_label = row_labels[i];
             int   col_label = local_col_labels[j];
             int   idx       = row_label * num_col_labels + col_label;
