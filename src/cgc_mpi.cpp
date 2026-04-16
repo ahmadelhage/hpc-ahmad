@@ -42,16 +42,21 @@ std::vector<double> calculate_cluster_average(
     MPI_Allreduce(local_count.data(), global_count.data(), num_clusters, MPI_INT,    MPI_SUM, MPI_COMM_WORLD);
     
     // Calculate the average for each cluster using the global sums and counts
-    std::vector<double> cluster_avg(num_clusters);
+    std::vector<double> cluster_avg(num_clusters, 0.0);
+    std::vector<double> prev_avg = cluster_avg;
     for (int i = 0; i < num_clusters; i++) {
    
    /*     cluster_avg[i] = (global_count[i] > 0)
             ? global_sum[i] / double(global_count[i])
             : 0.0;
             */
-           cluster_avg[i] = global_sum[i] / double(global_count[i]);
-    }
-    return cluster_avg;
+           //cluster_avg[i] = global_sum[i] / double(global_count[i]);
+           if (global_count[i] > 0) {
+                cluster_avg[i] = global_sum[i] / double(global_count[i]);
+            } else {
+                cluster_avg[i] = prev_avg[i]; // Keep the previous average if count is zero
+            }
+            return cluster_avg;
 }
 
 double calculate_distance(double avg, double item) {
