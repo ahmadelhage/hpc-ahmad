@@ -416,8 +416,8 @@ int main(int argc, const char* argv[]) {
         local_col_labels.data(),
         max_iter);
 
-    // Gather the updated column labels from all processes back to the root process (rank 0) using MPI_Gatherv
-    MPI_Gatherv(
+    // Gather the updated column labels from all processes back to the root process using MPI_Allgatherv 
+    MPI_Allgatherv(
         local_col_labels.data(), local_cols, MPI_INT,
         (rank == 0) ? col_labels.data() : nullptr,
         ncolPerP.data(), disp.data(), MPI_INT,
