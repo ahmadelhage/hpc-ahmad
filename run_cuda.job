@@ -3,7 +3,7 @@
 #SBATCH --job-name=cgc_cuda
 #SBATCH --output=job_%j.out
 #SBATCH --error=job_%j.err
-#SBATCH --nodes=4               # change to 1, 2, 4, 8 for benchmarking
+#SBATCH --nodes=12               # change to 1, 2, 4, 8 for benchmarking
 #SBATCH --ntasks-per-node=1
 #SBATCH --cpus-per-task=1
 #SBATCH --gres=gpu:A4000-Ada:1
