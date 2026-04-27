@@ -55,9 +55,7 @@ __global__ void kernel_divide_avg(
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
     if (idx >= num_clusters) return;
 
-    cluster_avg[idx] = (global_count[idx] > 0)
-        ? global_sum[idx] / (double)global_count[idx]
-        : 0.0;
+    cluster_avg[idx] = global_sum[idx] / (double)global_count[idx];
 }
 
 // KERNEL 3: compute partial row-label distances
