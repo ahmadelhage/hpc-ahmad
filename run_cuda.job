@@ -11,8 +11,8 @@
 #SBATCH --nice=100
 
 PROG=cgc_cuda
-DATA=/var/scratch/bwn200/HPC_data/spring_data_s.npy
-LABELS=/var/scratch/bwn200/HPC_data/spring_labels_s_5x100.txt
+DATA=/var/scratch/bwn200/HPC_data/spring_data_m.npy
+LABELS=/var/scratch/bwn200/HPC_data/spring_labels_m_5x100.txt
 OUT=labels_${SLURM_JOB_ID}.txt
 
 module load openmpi4/4.1.6
