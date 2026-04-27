@@ -10,7 +10,7 @@ NVCC=nvcc
 (e.g., cgc_cuda for deadline 2 and cgc_bonus_{PLACEHOLDER} for deadline 3).
 MPI_CFLAGS  = $(shell mpicxx --showme:compile)
 MPI_LDFLAGS = $(shell mpicxx --showme:link)
-BINS=cgc_serial cgc_mpi
+BINS=cgc_serial cgc_mpi cgc_cuda
 # Feel free to add additional optimization flags to CFLAGS and CUFLAGS.
 CFLAGS=-std=c++17 -O3 -march=native -Wall -Wextra -Wnarrowing -Wparentheses -Werror -Wno-unused-parameter -Wno-cast-function-type
 CUFLAGS=-arch=sm_89
@@ -25,9 +25,11 @@ cgc_mpi: $(SRC)/cgc_mpi.cpp $(SRC)/common.h
 	$(MPICC) -o $@ $(SRC)/cgc_mpi.cpp $(CFLAGS) $(INCLUDES)
 
 # Deadline 2
+# Deadline 2
 cgc_cuda: $(SRC)/cgc_cuda.cu $(SRC)/common.h
-	$(NVCC) $(NVCCFLAGS) $(MPI_CFLAGS) -o cgc_cuda src/cgc_cuda.cu $(MPI_LDFLAGS)
-
+	$(NVCC) -o $@ $(SRC)/cgc_cuda.cu -std=c++17 -O3 $(CUFLAGS) -x=cu -ccbin=mpic++ \
+		-Xcompiler "-Wall -Wextra -Wnarrowing -Wparentheses -Wno-unused-parameter -Wno-cast-function-type" \
+		$(INCLUDES)
 # Deadline 3
 # cgc_bonus_{PLACEHOLDER}: $(SRC)/cgc_bonus_{PLACEHOLDER}.cu $(SRC)/common.h
 # 	$(NVCC) -o $@ $(SRC)/cgc_bonus_{PLACEHOLDER}.cu $(CFLAGS) -x=cu -ccbin=mpic++ $(CUFLAGS) $(INCLUDES)
