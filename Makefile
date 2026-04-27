@@ -25,7 +25,6 @@ cgc_mpi: $(SRC)/cgc_mpi.cpp $(SRC)/common.h
 	$(MPICC) -o $@ $(SRC)/cgc_mpi.cpp $(CFLAGS) $(INCLUDES)
 
 # Deadline 2
-# Deadline 2
 cgc_cuda: $(SRC)/cgc_cuda.cu $(SRC)/common.h
 	$(NVCC) -o $@ $(SRC)/cgc_cuda.cu -std=c++17 -O3 $(CUFLAGS) -x=cu -ccbin=mpic++ \
 		-Xcompiler "-Wall -Wextra -Wnarrowing -Wparentheses -Wno-unused-parameter -Wno-cast-function-type" \
