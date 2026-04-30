@@ -179,7 +179,7 @@ void cluster_cuda(
 
     while (iteration < max_iterations) {
 
-        // calculate_cluster_average
+        // calculatecluster average
         CUDA_CHECK(cudaMemset(d_local_sum,   0, num_clusters * sizeof(double)));
         CUDA_CHECK(cudaMemset(d_local_count, 0, num_clusters * sizeof(int)));
 
@@ -192,14 +192,14 @@ void cluster_cuda(
             CUDA_CHECK(cudaDeviceSynchronize());
         }
 
-        // Copy partial sums from GPU → host for MPI reduction
+        // Copy partial sums from GPU to host for MPI reduction
         CUDA_CHECK(cudaMemcpy(h_local_sum.data(),   d_local_sum,   num_clusters * sizeof(double), cudaMemcpyDeviceToHost));
         CUDA_CHECK(cudaMemcpy(h_local_count.data(), d_local_count, num_clusters * sizeof(int),    cudaMemcpyDeviceToHost));
 
         MPI_Allreduce(h_local_sum.data(),   h_global_sum.data(),   num_clusters, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
         MPI_Allreduce(h_local_count.data(), h_global_count.data(), num_clusters, MPI_INT,    MPI_SUM, MPI_COMM_WORLD);
 
-        // Copy global sums back to GPU, compute averages there
+        // Copy global sums back to GPU compute averages there
         CUDA_CHECK(cudaMemcpy(d_local_sum,   h_global_sum.data(),   num_clusters * sizeof(double), cudaMemcpyHostToDevice));
         CUDA_CHECK(cudaMemcpy(d_local_count, h_global_count.data(), num_clusters * sizeof(int),    cudaMemcpyHostToDevice));
 
@@ -263,7 +263,7 @@ void cluster_cuda(
         MPI_Allreduce(&local_cols_updated, &global_cols_updated, 1, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
 
         // Also sum col distances for reporting
-        double local_dist_col = 0.0;  // not tracked per-col in CUDA version
+        double local_dist_col = 0.0;
         double global_dist_col = 0.0;
         MPI_Allreduce(&local_dist_col, &global_dist_col, 1, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
 
