@@ -30,12 +30,12 @@ cgc_cuda: $(SRC)/cgc_cuda.cu $(SRC)/common.h
 		-Xcompiler "-Wall -Wextra -Wnarrowing -Wparentheses -Wno-unused-parameter -Wno-cast-function-type" \
 		$(INCLUDES)
 # Deadline 3
-cgc_cuda_bonus_tunes: $(SRC)/cgc_cuda_bonus_tuned.cu $(SRC)/common.h
+cgc_cuda_bonus_tuned: $(SRC)/cgc_cuda_bonus_tuned.cu $(SRC)/common.h
 	$(NVCC) -o $@ $(SRC)/cgc_cuda_bonus_tuned.cu \
-	-std=c++17 -O3 -march=native \
-	-Xcompiler="-Wall,-Wextra,-Wnarrowing,-Wparentheses,-Werror,-Wno-unused-parameter,-Wno-cast-function-type" \
+	-std=c++17 -O3 \
+	-Xcompiler="-march=native,-Wall,-Wextra,-Wnarrowing,-Wparentheses,-Werror,-Wno-unused-parameter,-Wno-cast-function-type" \
 	-x=cu -ccbin=mpic++ $(CUFLAGS) $(INCLUDES)
-	
+
 submit:
 	tar -czf submission.tar.gz src/ Makefile *.job *.pdf
 
