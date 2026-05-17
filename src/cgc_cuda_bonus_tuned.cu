@@ -575,20 +575,12 @@ void cluster_cuda(
     CUDA_CHECK(cudaMemcpy(local_col_labels, d_col_labels,local_cols * sizeof(label_type), cudaMemcpyDeviceToHost));
 
 
-    cudaFree(d_matrix);
-    cudaFree(d_col_labels);
-    cudaFree(d_row_labels);
-    cudaFree(d_cluster_avg);
-    cudaFree(d_local_sum);
-    cudaFree(d_local_count);
-    cudaFree(d_partial_dist);
-    cudaFree(d_cols_updated);
-    cudaFreeHost(h_local_sum); 
-    cudaFreeHost(h_local_count);
-    cudaFreeHost(h_global_sum); 
-    cudaFreeHost(h_global_count);
-    cudaFreeHost(h_local_dist); 
-    cudaFreeHost(h_global_dist);
+    cudaFree(d_matrix); cudaFree(d_col_labels); cudaFree(d_row_labels);
+    cudaFree(d_cluster_avg); cudaFree(d_global_sum); cudaFree(d_global_count);
+    cudaFree(d_partial_dist); cudaFree(d_cols_updated);
+    cudaFreeHost(h_local_sum); cudaFreeHost(h_local_count);
+    cudaFreeHost(h_global_sum); cudaFreeHost(h_global_count);
+    cudaFreeHost(h_local_dist); cudaFreeHost(h_global_dist);
     cudaStreamDestroy(stream_compute);
     cudaStreamDestroy(stream_transfer);
 }
