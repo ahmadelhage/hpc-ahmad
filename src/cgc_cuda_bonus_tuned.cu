@@ -166,7 +166,7 @@ __global__ void kernel_row_distances(
         double item = (double)matrix[row * local_cols + col];
         int    cl   = k * num_col_labels + col_labels[col];
         double diff = cluster_avg[cl] - item;
-        dist += diff * diff / (cluster_avg_count + 1e-9); // Add small epsilon to avoid division by zero
+        dist += diff * diff / (global_count[cl] + 1e-9); // Add small epsilon to avoid division by zero
     }
     partial_dist[row * num_row_labels + k] = dist;
 }
