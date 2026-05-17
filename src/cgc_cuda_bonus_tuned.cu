@@ -532,6 +532,34 @@ void cluster_cuda(
                                 cudaMemcpyHostToDevice, stream_transfer));
         CUDA_CHECK(cudaStreamSynchronize(stream_transfer));
 
+        // After uploading updated row_labels to GPU (stream_transfer sync)...
+
+        // Recompute cluster averages with updated row labels before updating col labels
+        CUDA_CHECK(cudaMemsetAsync(d_global_sum,   0, num_clusters*sizeof(double), stream_compute));
+        CUDA_CHECK(cudaMemsetAsync(d_global_count, 0, num_clusters*sizeof(int),    stream_compute));
+
+        launch_cluster_sum(cfg, shared_size,
+            num_rows, local_cols, num_col_labels, num_clusters,
+            d_matrix, d_row_labels, d_col_labels,
+            d_global_sum, d_global_count, stream_compute);
+
+        CUDA_CHECK(cudaMemcpyAsync(h_local_sum,   d_global_sum,   num_clusters*sizeof(double), cudaMemcpyDeviceToHost, stream_compute));
+        CUDA_CHECK(cudaMemcpyAsync(h_local_count, d_global_count, num_clusters*sizeof(int),    cudaMemcpyDeviceToHost, stream_compute));
+        CUDA_CHECK(cudaStreamSynchronize(stream_compute));
+
+        MPI_Allreduce(h_local_sum,   h_global_sum,   num_clusters, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
+        MPI_Allreduce(h_local_count, h_global_count, num_clusters, MPI_INT,    MPI_SUM, MPI_COMM_WORLD);
+
+        CUDA_CHECK(cudaMemcpyAsync(d_global_sum,   h_global_sum,   num_clusters*sizeof(double), cudaMemcpyHostToDevice, stream_transfer));
+        CUDA_CHECK(cudaMemcpyAsync(d_global_count, h_global_count, num_clusters*sizeof(int),    cudaMemcpyHostToDevice, stream_transfer));
+        CUDA_CHECK(cudaStreamSynchronize(stream_transfer));
+
+        {
+            int blocks = (num_clusters + cfg.divide_avg - 1) / cfg.divide_avg;
+            kernel_divide_avg<<<blocks, cfg.divide_avg, 0, stream_compute>>>(
+                num_clusters, d_global_sum, d_global_count, d_cluster_avg);
+        }
+
         // STEP 3: update_col_labels
         CUDA_CHECK(cudaMemsetAsync(d_cols_updated, 0, sizeof(int), stream_compute));
         {
