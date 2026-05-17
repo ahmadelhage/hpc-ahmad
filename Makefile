@@ -30,8 +30,8 @@ cgc_cuda: $(SRC)/cgc_cuda.cu $(SRC)/common.h
 		-Xcompiler "-Wall -Wextra -Wnarrowing -Wparentheses -Wno-unused-parameter -Wno-cast-function-type" \
 		$(INCLUDES)
 # Deadline 3
-# cgc_bonus_{PLACEHOLDER}: $(SRC)/cgc_bonus_{PLACEHOLDER}.cu $(SRC)/common.h
-# 	$(NVCC) -o $@ $(SRC)/cgc_bonus_{PLACEHOLDER}.cu $(CFLAGS) -x=cu -ccbin=mpic++ $(CUFLAGS) $(INCLUDES)
+ cgc_cuda_bonus_tunes: $(SRC)/cgc_bonus_tunes.cu $(SRC)/common.h
+ 	$(NVCC) -o $@ $(SRC)/cgc_bonus_tunes.cu $(CFLAGS) -x=cu -ccbin=mpic++ $(CUFLAGS) $(INCLUDES)
 
 submit:
 	tar -czf submission.tar.gz src/ Makefile *.job *.pdf
