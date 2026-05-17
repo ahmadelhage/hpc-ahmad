@@ -426,7 +426,7 @@ void cluster_cuda(
     label_type* d_col_labels;
     label_type* d_row_labels;
     double*     d_cluster_avg;
-    double*     d_local_sum;
+    double*     d_local_sum, d_global_sum;
     int*        d_local_count;
     double*     d_partial_dist;
     int*        d_cols_updated;
@@ -445,7 +445,6 @@ void cluster_cuda(
     CUDA_CHECK(cudaMemcpy(d_col_labels, local_col_labels,  local_cols            * sizeof(label_type), cudaMemcpyHostToDevice));
     CUDA_CHECK(cudaMemcpy(d_row_labels, row_labels,        num_rows              * sizeof(label_type), cudaMemcpyHostToDevice));
 
-    double*     d_cluster_avg;
     int*        d_global_count;
 
 
