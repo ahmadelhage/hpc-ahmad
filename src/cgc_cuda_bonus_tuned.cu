@@ -83,8 +83,10 @@ __global__ void kernel_cluster_sum_shared(
 
     // One global atomic per cluster per block
     for (int i = threadIdx.x; i < num_clusters; i += blockDim.x) {
-        if (s_sum[i]   != 0.0) atomicAdd(&global_sum[i],   s_sum[i]);
-        if (s_count[i] != 0)   atomicAdd(&global_count[i], s_count[i]);
+        if (s_count[i] > 0) {
+        atomicAdd(&global_sum[i],   s_sum[i]);
+        atomicAdd(&global_count[i], s_count[i]);
+        }
     }
 }
 
@@ -295,7 +297,7 @@ TunedConfig auto_tune(
             // Pick best variant for this block size
             float best_at_t = ms_a; SumVariant var = SumVariant::ATOMIC;
             if (ms_b < best_at_t) { best_at_t = ms_b; var = SumVariant::SHARED; }
-            if (ms_c < best_at_t) { best_at_t = ms_c; var = SumVariant::WARP;   }
+            //if (ms_c < best_at_t) { best_at_t = ms_c; var = SumVariant::WARP;   }
 
             if (best_at_t < best_ms) {
                 best_ms            = best_at_t;
