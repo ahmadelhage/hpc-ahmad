@@ -417,36 +417,27 @@ void cluster_cuda(
     label_type*  local_col_labels,    // host
     int          max_iterations)
 {
-    int num_clusters = num_row_labels * num_col_labels;
+    int    num_clusters = num_row_labels * num_col_labels;
     size_t shared_size  = num_clusters * (sizeof(double) + sizeof(int));
 
-    const int THREADS = 256;
-
+    // ── Device allocations ───────────────────────────────────────────────────
     float*      d_matrix;
-    label_type* d_col_labels;
-    label_type* d_row_labels;
-    double*     d_cluster_avg;
-    double*     d_local_sum, d_global_sum;
-    int*        d_local_count;
-    double*     d_partial_dist;
-    int*        d_cols_updated;
+    label_type* d_col_labels, *d_row_labels;
+    double*     d_cluster_avg, *d_global_sum, *d_partial_dist;
+    int*        d_global_count, *d_cols_updated;
 
-    CUDA_CHECK(cudaMalloc(&d_matrix,       num_rows * local_cols * sizeof(float)));
-    CUDA_CHECK(cudaMalloc(&d_col_labels,   local_cols            * sizeof(label_type)));
-    CUDA_CHECK(cudaMalloc(&d_row_labels,   num_rows              * sizeof(label_type)));
-    CUDA_CHECK(cudaMalloc(&d_cluster_avg,  num_clusters          * sizeof(double)));
-    CUDA_CHECK(cudaMalloc(&d_local_sum,    num_clusters          * sizeof(double)));
-    CUDA_CHECK(cudaMalloc(&d_local_count,  num_clusters          * sizeof(int)));
-    CUDA_CHECK(cudaMalloc(&d_partial_dist, num_rows * num_row_labels * sizeof(double)));
+    CUDA_CHECK(cudaMalloc(&d_matrix,       num_rows * local_cols        * sizeof(float)));
+    CUDA_CHECK(cudaMalloc(&d_col_labels,   local_cols                   * sizeof(label_type)));
+    CUDA_CHECK(cudaMalloc(&d_row_labels,   num_rows                     * sizeof(label_type)));
+    CUDA_CHECK(cudaMalloc(&d_cluster_avg,  num_clusters                 * sizeof(double)));
+    CUDA_CHECK(cudaMalloc(&d_global_sum,   num_clusters                 * sizeof(double)));
+    CUDA_CHECK(cudaMalloc(&d_global_count, num_clusters                 * sizeof(int)));
+    CUDA_CHECK(cudaMalloc(&d_partial_dist, num_rows * num_row_labels    * sizeof(double)));
     CUDA_CHECK(cudaMalloc(&d_cols_updated, sizeof(int)));
 
-    // Upload matrix and initial labels to GPU
-    CUDA_CHECK(cudaMemcpy(d_matrix,     local_matrix,      num_rows * local_cols * sizeof(float),  cudaMemcpyHostToDevice));
-    CUDA_CHECK(cudaMemcpy(d_col_labels, local_col_labels,  local_cols            * sizeof(label_type), cudaMemcpyHostToDevice));
-    CUDA_CHECK(cudaMemcpy(d_row_labels, row_labels,        num_rows              * sizeof(label_type), cudaMemcpyHostToDevice));
-
-    int*        d_global_count;
-
+    CUDA_CHECK(cudaMemcpy(d_matrix,     local_matrix,     num_rows*local_cols*sizeof(float),  cudaMemcpyHostToDevice));
+    CUDA_CHECK(cudaMemcpy(d_col_labels, local_col_labels, local_cols*sizeof(label_type),       cudaMemcpyHostToDevice));
+    CUDA_CHECK(cudaMemcpy(d_row_labels, row_labels,       num_rows*sizeof(label_type),          cudaMemcpyHostToDevice));
 
     // Host buffers for MPI reductions
     double *h_local_sum, *h_global_sum, *h_local_dist, *h_global_dist;
