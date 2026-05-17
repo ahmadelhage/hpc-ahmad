@@ -1,0 +1,21 @@
+#!/bin/bash
+
+#SBATCH --job-name=cgc_bonus_tuned
+#SBATCH --output=job_%j.out
+#SBATCH --error=job_%j.err
+#SBATCH --nodes=1               # change to 1, 2, 4, 8 for benchmarking
+#SBATCH --ntasks-per-node=1
+#SBATCH --cpus-per-task=1
+#SBATCH --gres=gpu:A4000-Ada:1
+#SBATCH --time=00:15:00
+#SBATCH --nice=100
+
+PROG=cgc_cuda_bonus_tuned
+DATA=/var/scratch/bwn200/HPC_data/spring_data_xl.npy
+LABELS=/var/scratch/bwn200/HPC_data/spring_labels_xl_3x20.txt
+OUT=labels_${SLURM_JOB_ID}.txt
+
+module load openmpi4/4.1.6
+module load cuda12.6/toolkit/12.6
+
+mpirun -np ${SLURM_NTASKS} ./${PROG} ${DATA} ${LABELS} -o ${OUT}
