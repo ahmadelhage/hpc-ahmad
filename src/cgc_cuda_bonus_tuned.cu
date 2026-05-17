@@ -166,7 +166,7 @@ __global__ void kernel_row_distances(
         double item = (double)matrix[row * local_cols + col];
         int    cl   = k * num_col_labels + col_labels[col];
         double diff = cluster_avg[cl] - item;
-        dist += diff * diff;
+        dist += diff * diff / (cluster_avg_count + 1e-9); // Add small epsilon to avoid division by zero
     }
     partial_dist[row * num_row_labels + k] = dist;
 }
@@ -469,7 +469,7 @@ void cluster_cuda(
     auto before = std::chrono::high_resolution_clock::now();
 
     while (iteration < max_iterations) {
-
+/*
         // calculate cluster average
         CUDA_CHECK(cudaMemsetAsync(d_global_sum,   0, num_clusters*sizeof(double), stream_compute));
         CUDA_CHECK(cudaMemsetAsync(d_global_count, 0, num_clusters*sizeof(int),    stream_compute));
@@ -498,7 +498,7 @@ void cluster_cuda(
             kernel_divide_avg<<<blocks, cfg.divide_avg, 0, stream_compute>>>(
                 num_clusters, d_global_sum, d_global_count, d_cluster_avg);
         }
-
+*/
         //update_row_labels
         {
             int blocks = (num_rows * num_row_labels + cfg.row_dist - 1) / cfg.row_dist;
