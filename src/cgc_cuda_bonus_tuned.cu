@@ -445,10 +445,8 @@ void cluster_cuda(
     CUDA_CHECK(cudaMemcpy(d_col_labels, local_col_labels,  local_cols            * sizeof(label_type), cudaMemcpyHostToDevice));
     CUDA_CHECK(cudaMemcpy(d_row_labels, row_labels,        num_rows              * sizeof(label_type), cudaMemcpyHostToDevice));
 
-    float*      d_matrix;
-    label_type* d_col_labels, *d_row_labels;
-    double*     d_cluster_avg, *d_global_sum, *d_partial_dist;
-    int*        d_global_count, *d_cols_updated;
+    double*     d_cluster_avg;
+    int*        d_global_count;
 
 
     // Host buffers for MPI reductions
