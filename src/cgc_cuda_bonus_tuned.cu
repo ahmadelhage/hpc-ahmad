@@ -266,7 +266,7 @@ TunedConfig auto_tune(
                 CUDA_CHECK(cudaMemset(d_global_sum,   0, num_clusters*sizeof(double)));
                 CUDA_CHECK(cudaMemset(d_global_count, 0, num_clusters*sizeof(int)));
                 kernel_cluster_sum<<<blocks, t>>>(
-                    num_rows, local_cols, num_col_labels, num_clusters,
+                    num_rows, local_cols, num_col_labels,
                     d_matrix, d_row_labels, d_col_labels, d_global_sum, d_global_count);
             });
 
@@ -388,7 +388,7 @@ void launch_cluster_sum(
     switch (cfg.sum_variant) {
         case SumVariant::ATOMIC:
             kernel_cluster_sum<<<blocks, cfg.cluster_sum, 0, stream>>>(
-                num_rows, local_cols, num_col_labels, num_clusters,
+                num_rows, local_cols, num_col_labels,
                 d_matrix, d_row_labels, d_col_labels, d_global_sum, d_global_count);
             break;
         case SumVariant::SHARED:
@@ -444,6 +444,12 @@ void cluster_cuda(
     CUDA_CHECK(cudaMemcpy(d_matrix,     local_matrix,      num_rows * local_cols * sizeof(float),  cudaMemcpyHostToDevice));
     CUDA_CHECK(cudaMemcpy(d_col_labels, local_col_labels,  local_cols            * sizeof(label_type), cudaMemcpyHostToDevice));
     CUDA_CHECK(cudaMemcpy(d_row_labels, row_labels,        num_rows              * sizeof(label_type), cudaMemcpyHostToDevice));
+
+    float*      d_matrix;
+    label_type* d_col_labels, *d_row_labels;
+    double*     d_cluster_avg, *d_global_sum, *d_partial_dist;
+    int*        d_global_count, *d_cols_updated;
+
 
     // Host buffers for MPI reductions
     double *h_local_sum, *h_global_sum, *h_local_dist, *h_global_dist;
