@@ -308,7 +308,7 @@ TunedConfig auto_tune(
                 */
             float best_at_t = ms_a; 
             SumVariant var = SumVariant::ATOMIC;
-            if (ms_b < best_at_t) { 
+            if (ms_b > best_at_t) { 
                 best_at_t = ms_b; 
                 var = SumVariant::SHARED; }
             best_ms = best_at_t;
