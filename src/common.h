@@ -69,7 +69,7 @@ static bool read_labels(
     return true;
 }
 
-static void write_labels(
+static inline void write_labels(
     const std::string& file_name,
     int num_rows,
     int num_cols,
@@ -104,7 +104,7 @@ initialize_labels(int num_items, int num_labels, R& rng) {
     return labels;
 }
 
-static bool parse_arguments(
+static inline bool parse_arguments(
     int argc,
     const char* argv[],
     int* num_rows_out,
