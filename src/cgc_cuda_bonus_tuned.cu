@@ -166,7 +166,7 @@ __global__ void kernel_row_distances(
         double item = (double)matrix[row * local_cols + col];
         int    cl   = k * num_col_labels + col_labels[col];
         double diff = cluster_avg[cl] - item;
-        dist += diff * diff / (cluster_avg[cl] + 1e-9); // Add small epsilon to avoid division by zero
+        dist += diff * diff;
     }
     partial_dist[row * num_row_labels + k] = dist;
 }
@@ -464,12 +464,24 @@ void cluster_cuda(
         d_cluster_avg, d_global_sum, d_global_count,
         d_partial_dist, d_cols_updated);
 
+    //Reset row labels to initial state before starting iterations (auto-tuning may have modified them)
+    // ── Reset GPU state after auto-tuning ─────────────────────────────────
+    CUDA_CHECK(cudaMemset(d_global_sum,   0, num_clusters * sizeof(double)));
+    CUDA_CHECK(cudaMemset(d_global_count, 0, num_clusters * sizeof(int)));
+    CUDA_CHECK(cudaMemset(d_cluster_avg,  0, num_clusters * sizeof(double)));
+    CUDA_CHECK(cudaMemset(d_cols_updated, 0, sizeof(int)));
+    // Restore labels to their original values
+    CUDA_CHECK(cudaMemcpy(d_col_labels, local_col_labels,
+                        local_cols * sizeof(label_type), cudaMemcpyHostToDevice));
+    CUDA_CHECK(cudaMemcpy(d_row_labels, row_labels,
+                        num_rows * sizeof(label_type), cudaMemcpyHostToDevice));
+
 
     int iteration = 0;
     auto before = std::chrono::high_resolution_clock::now();
 
     while (iteration < max_iterations) {
-/*
+
         // calculate cluster average
         CUDA_CHECK(cudaMemsetAsync(d_global_sum,   0, num_clusters*sizeof(double), stream_compute));
         CUDA_CHECK(cudaMemsetAsync(d_global_count, 0, num_clusters*sizeof(int),    stream_compute));
@@ -498,7 +510,7 @@ void cluster_cuda(
             kernel_divide_avg<<<blocks, cfg.divide_avg, 0, stream_compute>>>(
                 num_clusters, d_global_sum, d_global_count, d_cluster_avg);
         }
-*/
+
         //update_row_labels
         {
             int blocks = (num_rows * num_row_labels + cfg.row_dist - 1) / cfg.row_dist;
