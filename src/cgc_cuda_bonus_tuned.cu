@@ -531,7 +531,7 @@ void cluster_cuda_bonus(
                     MPI_SUM,
                     MPI_COMM_WORLD);
 
-        int num_updated = global_rows_updated + global_cols_updated;
+        num_updated = global_rows_updated + global_cols_updated;
 
         iteration++;
         int    num_updated  = rows_updated + global_cols_updated;
