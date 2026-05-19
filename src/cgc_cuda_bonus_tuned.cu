@@ -531,10 +531,9 @@ void cluster_cuda_bonus(
                     MPI_SUM,
                     MPI_COMM_WORLD);
 
-        num_updated = global_rows_updated + global_cols_updated;
+        int num_updated = global_rows_updated + global_cols_updated;
 
         iteration++;
-        int    num_updated  = rows_updated + global_cols_updated;
         double average_dist = total_dist_row / (double)(num_rows * num_cols);
 
         if (rank == 0)
