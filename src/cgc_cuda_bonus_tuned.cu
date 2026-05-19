@@ -512,6 +512,43 @@ void cluster_cuda_bonus(
                                    sizeof(int), cudaMemcpyDeviceToHost, stream_compute));
         CUDA_CHECK(cudaStreamSynchronize(stream_compute));
 
+        std::vector<label_type> global_col_labels;
+
+        if (rank == 0)
+            global_col_labels.resize(num_cols);
+
+        MPI_Gatherv(local_col_labels.data(),
+                    local_cols,
+                    MPI_INT,
+                    (rank == 0) ? global_col_labels.data() : nullptr,
+                    sendcounts.data(),
+                    displs.data(),
+                    MPI_INT,
+                    0,
+                    MPI_COMM_WORLD);
+
+        MPI_Bcast((rank == 0) ? global_col_labels.data() : col_labels.data(),
+                num_cols,
+                MPI_INT,
+                0,
+                MPI_COMM_WORLD);
+        MPI_Scatterv((rank == 0) ? global_col_labels.data() : col_labels.data(),
+             sendcounts.data(),
+             displs.data(),
+             MPI_INT,
+             local_col_labels.data(),
+             local_cols,
+             MPI_INT,
+             0,
+            MPI_COMM_WORLD);
+        CUDA_CHECK(cudaMemcpyAsync(
+            d_col_labels,
+            local_col_labels,
+            local_cols * sizeof(label_type),
+            cudaMemcpyHostToDevice,
+            stream_transfer));
+
+        CUDA_CHECK(cudaStreamSynchronize(stream_transfer));
         int global_cols_updated = 0;
         MPI_Allreduce(&local_cols_updated, &global_cols_updated, 1, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
         CUDA_CHECK(cudaMemcpyAsync(
@@ -534,7 +571,15 @@ void cluster_cuda_bonus(
         int num_updated = global_rows_updated + global_cols_updated;
 
         iteration++;
-        double average_dist = total_dist_row / (double)(num_rows * num_cols);
+        double global_total_dist = 0.0;
+
+        MPI_Allreduce(&total_dist_row,
+            &global_total_dist,
+            1,
+            MPI_DOUBLE,
+            MPI_SUM,
+            MPI_COMM_WORLD);
+        double average_dist = global_total_dist / (double)(num_rows * num_cols);
 
         if (rank == 0)
             std::cout << "iteration " << iteration << ": " << num_updated
