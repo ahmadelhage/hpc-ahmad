@@ -464,6 +464,10 @@ void cluster_cuda(
     CUDA_CHECK(cudaStreamCreate(&stream_compute));
     CUDA_CHECK(cudaStreamCreate(&stream_transfer));
 
+    CUDA_CHECK(cudaMemset(d_cluster_avg, 0, num_clusters*sizeof(double)));
+    CUDA_CHECK(cudaMemset(d_partial_dist, 0,
+        num_rows*num_row_labels*sizeof(double)));
+    CUDA_CHECK(cudaMemset(d_cols_updated, 0, sizeof(int)));
     // Auto-tune kernels and block sizes before starting iterations
     TunedConfig cfg = auto_tune(
         rank, num_rows, local_cols, num_row_labels, num_col_labels, num_clusters,
@@ -502,17 +506,17 @@ void cluster_cuda(
             d_global_sum, d_global_count, stream_compute);
 
         // Copy local sums and counts back to host for MPI reduction
-        CUDA_CHECK(cudaMemcpyAsync(h_local_sum,   d_global_sum,   num_clusters*sizeof(double), cudaMemcpyDeviceToHost, stream_compute));
-        CUDA_CHECK(cudaMemcpyAsync(h_local_count, d_global_count, num_clusters*sizeof(int),    cudaMemcpyDeviceToHost, stream_compute));
+        CUDA_CHECK(cudaMemcpy(h_local_sum,   d_global_sum,   num_clusters*sizeof(double), cudaMemcpyDeviceToHost, stream_compute));
+        CUDA_CHECK(cudaMemcpy(h_local_count, d_global_count, num_clusters*sizeof(int),    cudaMemcpyDeviceToHost, stream_compute));
         CUDA_CHECK(cudaStreamSynchronize(stream_compute));
 
         MPI_Allreduce(h_local_sum,   h_global_sum,   num_clusters, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
         MPI_Allreduce(h_local_count, h_global_count, num_clusters, MPI_INT,    MPI_SUM, MPI_COMM_WORLD);
 
         // Copy global sums and counts back to GPU for divide_avg kernel
-        CUDA_CHECK(cudaMemcpyAsync(d_global_sum,   h_global_sum,   num_clusters*sizeof(double), cudaMemcpyHostToDevice, stream_transfer));
-        CUDA_CHECK(cudaMemcpyAsync(d_global_count, h_global_count, num_clusters*sizeof(int),    cudaMemcpyHostToDevice, stream_transfer));
-        CUDA_CHECK(cudaStreamSynchronize(stream_transfer));
+        CUDA_CHECK(cudaMemcpy(d_global_sum,   h_global_sum,   num_clusters*sizeof(double), cudaMemcpyHostToDevice, stream_transfer));
+        CUDA_CHECK(cudaMemcpy(d_global_count, h_global_count, num_clusters*sizeof(int),    cudaMemcpyHostToDevice, stream_transfer));
+        CUDA_CHECK(cudaDeviceSynchronize());
 
         {
             
@@ -531,7 +535,7 @@ void cluster_cuda(
         }
 
         // Copy partial distances back to host for MPI reduction and label updates
-        CUDA_CHECK(cudaMemcpyAsync(h_local_dist, d_partial_dist,
+        CUDA_CHECK(cudaMemcpy(h_local_dist, d_partial_dist,
                                 num_rows*num_row_labels*sizeof(double),
                                 cudaMemcpyDeviceToHost, stream_compute));
         CUDA_CHECK(cudaStreamSynchronize(stream_compute));
@@ -552,7 +556,7 @@ void cluster_cuda(
         }
 
         // Upload updated row labels to GPU for next iteration
-        CUDA_CHECK(cudaMemcpyAsync(d_row_labels, row_labels,
+        CUDA_CHECK(cudaMemcpy(d_row_labels, row_labels,
                                 num_rows*sizeof(label_type),
                                 cudaMemcpyHostToDevice, stream_transfer));
         CUDA_CHECK(cudaStreamSynchronize(stream_transfer));
@@ -568,15 +572,15 @@ void cluster_cuda(
             d_matrix, d_row_labels, d_col_labels,
             d_global_sum, d_global_count, stream_compute);
 
-        CUDA_CHECK(cudaMemcpyAsync(h_local_sum,   d_global_sum,   num_clusters*sizeof(double), cudaMemcpyDeviceToHost, stream_compute));
-        CUDA_CHECK(cudaMemcpyAsync(h_local_count, d_global_count, num_clusters*sizeof(int),    cudaMemcpyDeviceToHost, stream_compute));
+        CUDA_CHECK(cudaMemcpy(h_local_sum,   d_global_sum,   num_clusters*sizeof(double), cudaMemcpyDeviceToHost, stream_compute));
+        CUDA_CHECK(cudaMemcpy(h_local_count, d_global_count, num_clusters*sizeof(int),    cudaMemcpyDeviceToHost, stream_compute));
         CUDA_CHECK(cudaStreamSynchronize(stream_compute));
 
         MPI_Allreduce(h_local_sum,   h_global_sum,   num_clusters, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
         MPI_Allreduce(h_local_count, h_global_count, num_clusters, MPI_INT,    MPI_SUM, MPI_COMM_WORLD);
 
-        CUDA_CHECK(cudaMemcpyAsync(d_global_sum,   h_global_sum,   num_clusters*sizeof(double), cudaMemcpyHostToDevice, stream_transfer));
-        CUDA_CHECK(cudaMemcpyAsync(d_global_count, h_global_count, num_clusters*sizeof(int),    cudaMemcpyHostToDevice, stream_transfer));
+        CUDA_CHECK(cudaMemcpy(d_global_sum,   h_global_sum,   num_clusters*sizeof(double), cudaMemcpyHostToDevice, stream_transfer));
+        CUDA_CHECK(cudaMemcpy(d_global_count, h_global_count, num_clusters*sizeof(int),    cudaMemcpyHostToDevice, stream_transfer));
         CUDA_CHECK(cudaStreamSynchronize(stream_transfer));
 
         {
@@ -596,7 +600,7 @@ void cluster_cuda(
                 d_cluster_avg, d_cols_updated);
         }
         int local_cols_updated = 0;
-        CUDA_CHECK(cudaMemcpyAsync(&local_cols_updated, d_cols_updated,
+        CUDA_CHECK(cudaMemcpy(&local_cols_updated, d_cols_updated,
                                 sizeof(int), cudaMemcpyDeviceToHost, stream_compute));
         CUDA_CHECK(cudaStreamSynchronize(stream_compute));
 
