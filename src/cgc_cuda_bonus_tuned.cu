@@ -509,7 +509,8 @@ void cluster_cuda_bonus(
                 d_matrix, d_row_labels, d_col_labels,
                 d_cluster_avg, d_cols_updated);
         }
-        int local_cols_updated = 0;CUDA_CHECK(cudaMemcpyAsync(
+        int local_cols_updated = 0;
+        CUDA_CHECK(cudaMemcpyAsync(
             local_col_labels,
             d_col_labels,
             local_cols * sizeof(label_type),
@@ -517,6 +518,14 @@ void cluster_cuda_bonus(
             stream_compute));
 
         CUDA_CHECK(cudaStreamSynchronize(stream_compute));
+        int global_cols_updated = 0;
+
+        MPI_Allreduce(&local_cols_updated,
+              &global_cols_updated,
+              1,
+              MPI_INT,
+              MPI_SUM,
+              MPI_COMM_WORLD);
 
         std::vector<label_type> global_col_labels;
 
@@ -560,7 +569,7 @@ void cluster_cuda_bonus(
                     MPI_SUM,
                     MPI_COMM_WORLD);
 
-        int num_updated = global_rows_updated + local_cols_updated;
+        int num_updated = global_rows_updated + global_cols_updated;
 
         iteration++;
         double global_total_dist = 0.0;
