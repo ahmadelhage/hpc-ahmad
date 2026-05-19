@@ -514,6 +514,24 @@ void cluster_cuda_bonus(
 
         int global_cols_updated = 0;
         MPI_Allreduce(&local_cols_updated, &global_cols_updated, 1, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
+        CUDA_CHECK(cudaMemcpyAsync(
+            local_col_labels,
+            d_col_labels,
+            local_cols * sizeof(label_type),
+            cudaMemcpyDeviceToHost,
+            stream_compute));
+
+        CUDA_CHECK(cudaStreamSynchronize(stream_compute));
+        int global_rows_updated = 0;
+
+        MPI_Allreduce(&rows_updated,
+                    &global_rows_updated,
+                    1,
+                    MPI_INT,
+                    MPI_SUM,
+                    MPI_COMM_WORLD);
+
+        int num_updated = global_rows_updated + global_cols_updated;
 
         iteration++;
         int    num_updated  = rows_updated + global_cols_updated;
