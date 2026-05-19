@@ -311,6 +311,9 @@ TunedConfig auto_tune(
             if (ms_b < best_at_t) { 
                 best_at_t = ms_b; 
                 var = SumVariant::SHARED; }
+            best_ms = best_at_t;
+            best.cluster_sum = t;
+            best.sum_variant = var;
         }
 
         const char* vname = (best.sum_variant == SumVariant::ATOMIC) ? "atomic" :
