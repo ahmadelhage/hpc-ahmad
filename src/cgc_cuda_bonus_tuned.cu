@@ -483,6 +483,8 @@ void cluster_cuda(
     CUDA_CHECK(cudaMemcpy(d_row_labels, row_labels,
                         num_rows * sizeof(label_type), cudaMemcpyHostToDevice));
 
+    CUDA_CHECK(cudaDeviceSynchronize());  // ensure all async resets are complete
+
 
     int iteration = 0;
     auto before = std::chrono::high_resolution_clock::now();
