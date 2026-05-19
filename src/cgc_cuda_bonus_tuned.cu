@@ -225,13 +225,19 @@ struct TunedConfig {
 };
 
 static float time_kernel_ms(std::function<void()> fn, int warmup=2, int runs=5) {
-    for (int i = 0; i < warmup; i++) fn();
-    CUDA_CHECK(cudaDeviceSynchronize());
+    for (int i = 0; i < warmup; i++) {
+        fn();
+        CUDA_CHECK(cudaGetLastError());
+        CUDA_CHECK(cudaDeviceSynchronize());
+    }
     cudaEvent_t start, stop;
     CUDA_CHECK(cudaEventCreate(&start));
     CUDA_CHECK(cudaEventCreate(&stop));
     CUDA_CHECK(cudaEventRecord(start));
-    for (int i = 0; i < runs; i++) fn();
+    for (int i = 0; i < runs; i++){
+        fn();
+        CUDA_CHECK(cudaGetLastError());
+    }
     CUDA_CHECK(cudaEventRecord(stop));
     CUDA_CHECK(cudaEventSynchronize(stop));
     float ms = 0;
@@ -249,7 +255,26 @@ TunedConfig auto_tune(
     double* d_cluster_avg, double* d_global_sum, int* d_global_count,
     double* d_partial_dist, int* d_cols_updated)
 {
-    const std::vector<int> candidates = {64, 128, 256, 512, 1024};
+    label_type* d_col_labels_tmp;
+    double*     d_partial_dist_tmp;
+    int*        d_cols_updated_tmp;
+
+    CUDA_CHECK(cudaMalloc(&d_col_labels_tmp,
+        local_cols * sizeof(label_type)));
+
+    CUDA_CHECK(cudaMalloc(&d_partial_dist_tmp,
+        num_rows * num_row_labels * sizeof(double)));
+
+    CUDA_CHECK(cudaMalloc(&d_cols_updated_tmp,
+        sizeof(int)));
+
+    CUDA_CHECK(cudaMemcpy(
+        d_col_labels_tmp,
+        d_col_labels,
+        local_cols * sizeof(label_type),
+        cudaMemcpyDeviceToDevice));
+
+    const std::vector<int> candidates = {64, 128, 256, 512};
     TunedConfig best = {256, SumVariant::SHARED, 256, 256, 256};
     size_t shared_size = num_clusters * (sizeof(double) + sizeof(int));
 
@@ -296,10 +321,9 @@ TunedConfig auto_tune(
 
             if (rank == 0)
                 printf("  block=%4d  atomic=%.3fms  shared=%.3fms  warp=%.3fms\n",
-                       t, ms_a, ms_b, ms_c);
+                    t, ms_a, ms_b, ms_c);
 
             // Pick best variant for this block size
-           
             float best_at_t = ms_a; SumVariant var = SumVariant::ATOMIC;
             //if (ms_b < best_at_t) { best_at_t = ms_b; var = SumVariant::SHARED; }
             //if (ms_c < best_at_t) { best_at_t = ms_c; var = SumVariant::WARP;   }
@@ -309,8 +333,7 @@ TunedConfig auto_tune(
                 best.cluster_sum   = t;
                 best.sum_variant   = var;
             }
-                
-           
+        
         }
 
         const char* vname = (best.sum_variant == SumVariant::ATOMIC) ? "atomic" :
@@ -344,7 +367,7 @@ TunedConfig auto_tune(
             float ms = time_kernel_ms([&]() {
                 kernel_row_distances<<<blocks, t>>>(
                     num_rows, local_cols, num_row_labels, num_col_labels,
-                    d_matrix, d_col_labels, d_cluster_avg, d_partial_dist);
+                    d_matrix, d_col_labels, d_cluster_avg, d_partial_dist_tmp);
             });
             if (rank == 0) printf("  block=%4d  %.3fms\n", t, ms);
             if (ms < best_ms) { best_ms = ms; best.row_dist = t; }
@@ -362,8 +385,8 @@ TunedConfig auto_tune(
                 CUDA_CHECK(cudaMemset(d_cols_updated, 0, sizeof(int)));
                 kernel_col_labels<<<blocks, t>>>(
                     num_rows, local_cols, num_col_labels,
-                    d_matrix, d_row_labels, d_col_labels,
-                    d_cluster_avg, d_cols_updated);
+                    d_matrix, d_row_labels, d_col_labels_tmp,
+                    d_cluster_avg, d_cols_updated_tmp);
             });
             if (rank == 0) printf("  block=%4d  %.3fms\n", t, ms);
             if (ms < best_ms) { best_ms = ms; best.col_labels = t; }
@@ -380,6 +403,10 @@ TunedConfig auto_tune(
         printf("  row_dist:    block=%d\n", best.row_dist);
         printf("  col_labels:  block=%d\n\n", best.col_labels);
     }
+    
+    cudaFree(d_col_labels_tmp);
+    cudaFree(d_partial_dist_tmp);
+    cudaFree(d_cols_updated_tmp);
     return best;
 }
 
@@ -523,6 +550,7 @@ void cluster_cuda(
             int blocks = (num_clusters + cfg.divide_avg - 1) / cfg.divide_avg;
             kernel_divide_avg<<<blocks, cfg.divide_avg, 0, stream_compute>>>(
                 num_clusters, d_global_sum, d_global_count, d_cluster_avg);
+            CUDA_CHECK(cudaStreamSynchronize(stream_compute));
         
         }
 
@@ -585,9 +613,9 @@ void cluster_cuda(
 
         {
             int blocks = (num_clusters + cfg.divide_avg - 1) / cfg.divide_avg;
-            kernel_divide_avg<<<blocks, cfg.divide_avg, 0, stream_compute>>>(
-                
+            kernel_divide_avg<<<blocks, cfg.divide_avg, 0, stream_compute>>>(                
                 num_clusters, d_global_sum, d_global_count, d_cluster_avg);
+            CUDA_CHECK(cudaStreamSynchronize(stream_compute));
         }
 
         // STEP 3: update_col_labels
