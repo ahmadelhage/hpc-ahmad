@@ -1,4 +1,3 @@
-#pragma GCC diagnostic ignored "-Wunused-function"
 #pragma once
 
 #include <algorithm>

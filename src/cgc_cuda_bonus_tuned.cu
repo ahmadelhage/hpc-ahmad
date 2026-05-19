@@ -8,7 +8,7 @@
 // 6. Fixed autotune pollution completely
 //
 // ================================================================
-
+#pragma GCC diagnostic ignored "-Wunused-function"
 #include <chrono>
 #include <iostream>
 #include <limits>
