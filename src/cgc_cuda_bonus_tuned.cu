@@ -517,10 +517,9 @@ void cluster_cuda(
         {
             int blocks = (num_clusters + cfg.divide_avg - 1) / cfg.divide_avg;
             kernel_col_labels<<<blocks, cfg.col_labels, 0, stream_compute>>>(
-                    num_rows, local_cols, num_col_labels,
-                    d_matrix, d_row_labels, d_col_labels,
-                    d_cluster_avg, d_cols_updated);
-                }
+                num_rows, local_cols, num_col_labels,
+                d_matrix, d_row_labels, d_col_labels,
+                d_cluster_avg, d_cols_updated);}
 
         //update_row_labels
         {
