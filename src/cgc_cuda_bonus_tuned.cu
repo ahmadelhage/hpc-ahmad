@@ -388,6 +388,8 @@ void cluster_cuda_bonus(
     const float* local_matrix,
     label_type*  row_labels,
     label_type*  local_col_labels,
+    const std::vector<int>& sendcounts,
+    const std::vector<int>& displs,
     int max_iterations)
 {
     int    num_clusters = num_row_labels * num_col_labels;
@@ -507,9 +509,13 @@ void cluster_cuda_bonus(
                 d_matrix, d_row_labels, d_col_labels,
                 d_cluster_avg, d_cols_updated);
         }
-        int local_cols_updated = 0;
-        CUDA_CHECK(cudaMemcpyAsync(&local_cols_updated, d_cols_updated,
-                                   sizeof(int), cudaMemcpyDeviceToHost, stream_compute));
+        int local_cols_updated = 0;CUDA_CHECK(cudaMemcpyAsync(
+            local_col_labels,
+            d_col_labels,
+            local_cols * sizeof(label_type),
+            cudaMemcpyDeviceToHost,
+            stream_compute));
+
         CUDA_CHECK(cudaStreamSynchronize(stream_compute));
 
         std::vector<label_type> global_col_labels;
@@ -517,30 +523,26 @@ void cluster_cuda_bonus(
         if (rank == 0)
             global_col_labels.resize(num_cols);
 
-        MPI_Gatherv(local_col_labels.data(),
-                    local_cols,
-                    MPI_INT,
-                    (rank == 0) ? global_col_labels.data() : nullptr,
-                    sendcounts.data(),
-                    displs.data(),
-                    MPI_INT,
-                    0,
-                    MPI_COMM_WORLD);
+        MPI_Gatherv(local_col_labels,
+            local_cols,
+            MPI_INT,
+            (rank == 0) ? global_col_labels.data() : nullptr,
+            sendcounts.data(),
+            displs.data(),
+            MPI_INT,
+            0,
+            MPI_COMM_WORLD);
 
-        MPI_Bcast((rank == 0) ? global_col_labels.data() : col_labels.data(),
+        MPI_Bcast(global_col_labels.data(),
                 num_cols,
                 MPI_INT,
                 0,
                 MPI_COMM_WORLD);
-        MPI_Scatterv((rank == 0) ? global_col_labels.data() : col_labels.data(),
-             sendcounts.data(),
-             displs.data(),
-             MPI_INT,
-             local_col_labels.data(),
-             local_cols,
-             MPI_INT,
-             0,
-            MPI_COMM_WORLD);
+
+        memcpy(local_col_labels,
+            global_col_labels.data() + displs[rank],
+            local_cols * sizeof(label_type));
+
         CUDA_CHECK(cudaMemcpyAsync(
             d_col_labels,
             local_col_labels,
@@ -549,16 +551,6 @@ void cluster_cuda_bonus(
             stream_transfer));
 
         CUDA_CHECK(cudaStreamSynchronize(stream_transfer));
-        int global_cols_updated = 0;
-        MPI_Allreduce(&local_cols_updated, &global_cols_updated, 1, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
-        CUDA_CHECK(cudaMemcpyAsync(
-            local_col_labels,
-            d_col_labels,
-            local_cols * sizeof(label_type),
-            cudaMemcpyDeviceToHost,
-            stream_compute));
-
-        CUDA_CHECK(cudaStreamSynchronize(stream_compute));
         int global_rows_updated = 0;
 
         MPI_Allreduce(&rows_updated,
@@ -667,11 +659,12 @@ int main(int argc, const char* argv[]) {
                      0, MPI_COMM_WORLD);
     }
     if (rank==0) { matrix.clear(); matrix.shrink_to_fit(); }
-
     cluster_cuda_bonus(rank, nprocs, num_rows, num_cols, local_cols,
-                       num_row_labels, num_col_labels,
-                       local_matrix.data(), row_labels.data(),
-                       local_col_labels.data(), max_iter);
+                num_row_labels, num_col_labels,
+                local_matrix.data(), row_labels.data(),
+                local_col_labels.data(),
+                sendcounts, displs,
+                max_iter);
 
     if (rank==0) col_labels.resize(num_cols);
     MPI_Gatherv(local_col_labels.data(), local_cols, MPI_INT,
