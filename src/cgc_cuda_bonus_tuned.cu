@@ -109,21 +109,25 @@ __global__ void kernel_cluster_sum_warp(
 
     // Warp-level reduction: threads with matching cluster accumulate together
     // using __shfl_down_sync to pass values between lanes without shared memory
+    // Track count alongside value
+    int my_count = 1;
     unsigned mask = 0xffffffff;
     int lane = threadIdx.x & 31;
 
     for (int offset = 16; offset > 0; offset >>= 1) {
-        double other_val     = __shfl_down_sync(mask, item,    offset);
-        int    other_cluster = __shfl_down_sync(mask, cluster, offset);
-        if (other_cluster == cluster)
-            item += other_val;
+        double other_val     = __shfl_down_sync(mask, item,      offset);
+        int    other_cluster = __shfl_down_sync(mask, cluster,   offset);
+        int    other_count   = __shfl_down_sync(mask, my_count,  offset);
+        if (other_cluster == cluster) {
+            item     += other_val;
+            my_count += other_count;   // ← accumulate count too
+        }
     }
 
-    // Only the lowest-lane thread of each matching group writes to global memory
     int prev_cluster = __shfl_up_sync(mask, cluster, 1);
     if (lane == 0 || prev_cluster != cluster) {
         atomicAdd(&global_sum[cluster],   item);
-        atomicAdd(&global_count[cluster], 1);
+        atomicAdd(&global_count[cluster], my_count);  // ← write reduced count
     }
 }
 
