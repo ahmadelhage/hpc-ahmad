@@ -295,6 +295,7 @@ TunedConfig auto_tune(
                        t, ms_a, ms_b, ms_c);
 
             // Pick best variant for this block size
+           /*
             float best_at_t = ms_a; SumVariant var = SumVariant::ATOMIC;
             if (ms_b < best_at_t) { best_at_t = ms_b; var = SumVariant::SHARED; }
             //if (ms_c < best_at_t) { best_at_t = ms_c; var = SumVariant::WARP;   }
@@ -304,6 +305,9 @@ TunedConfig auto_tune(
                 best.cluster_sum   = t;
                 best.sum_variant   = var;
             }
+                */
+            float best_at_t = ms_a; SumVariant var = SumVariant::ATOMIC;
+            if (ms_b < best_at_t) { best_at_t = ms_b; var = SumVariant::SHARED; }
         }
 
         const char* vname = (best.sum_variant == SumVariant::ATOMIC) ? "atomic" :
