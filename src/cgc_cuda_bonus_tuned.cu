@@ -526,16 +526,13 @@ void cluster_cuda_bonus(
               MPI_INT,
               MPI_SUM,
               MPI_COMM_WORLD);
-
-        std::vector<label_type> global_col_labels;
-
-        if (rank == 0)
-            global_col_labels.resize(num_cols);
+              
+        std::vector<label_type> global_col_labels(num_cols);
 
         MPI_Gatherv(local_col_labels,
             local_cols,
             MPI_INT,
-            (rank == 0) ? global_col_labels.data() : nullptr,
+            global_col_labels.data(),
             sendcounts.data(),
             displs.data(),
             MPI_INT,
