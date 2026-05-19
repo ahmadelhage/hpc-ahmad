@@ -560,7 +560,7 @@ void cluster_cuda_bonus(
                     MPI_SUM,
                     MPI_COMM_WORLD);
 
-        int num_updated = global_rows_updated + global_cols_updated;
+        int num_updated = global_rows_updated + local_cols_updated;
 
         iteration++;
         double global_total_dist = 0.0;
