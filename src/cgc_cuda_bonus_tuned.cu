@@ -515,11 +515,12 @@ void cluster_cuda(
         CUDA_CHECK(cudaStreamSynchronize(stream_transfer));
 
         {
+            
             int blocks = (num_clusters + cfg.divide_avg - 1) / cfg.divide_avg;
-            kernel_col_labels<<<blocks, cfg.col_labels, 0, stream_compute>>>(
-                num_rows, local_cols, num_col_labels,
-                d_matrix, d_row_labels, d_col_labels,
-                d_cluster_avg, d_cols_updated);}
+            kernel_divide_avg<<<blocks, cfg.divide_avg, 0, stream_compute>>>(
+                num_clusters, d_global_sum, d_global_count, d_cluster_avg);
+        
+        }
 
         //update_row_labels
         {
@@ -581,6 +582,7 @@ void cluster_cuda(
         {
             int blocks = (num_clusters + cfg.divide_avg - 1) / cfg.divide_avg;
             kernel_divide_avg<<<blocks, cfg.divide_avg, 0, stream_compute>>>(
+                
                 num_clusters, d_global_sum, d_global_count, d_cluster_avg);
         }
 
