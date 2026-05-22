@@ -1,0 +1,24 @@
+#!/bin/bash
+
+#SBATCH --job-name=cgc_mpi_omp
+#SBATCH --output=job_%j.out
+#SBATCH --error=job_%j.err
+#SBATCH --nodes=4               # change to 1, 2, 4, 8 for benchmarking
+#SBATCH --ntasks-per-node=1
+#SBATCH --cpus-per-task=32      # use all 32 cores per node for OpenMP
+#SBATCH --gres=gpu:A4000-Ada:1
+#SBATCH --time=00:15:00
+#SBATCH --nice=100
+
+PROG=cgc_mpi_omp
+DATA=/var/scratch/bwn200/HPC_data/spring_data_xl.npy
+LABELS=/var/scratch/bwn200/HPC_data/spring_labels_xl_3x20.txt
+OUT=labels_${SLURM_JOB_ID}.txt
+
+module load openmpi4/4.1.6
+module load cuda12.6/toolkit/12.6
+
+# Set OpenMP thread count to match cpus-per-task
+export OMP_NUM_THREADS=${SLURM_CPUS_PER_TASK}
+
+mpirun -np ${SLURM_NTASKS} ./${PROG} ${DATA} ${LABELS} -o ${OUT}
