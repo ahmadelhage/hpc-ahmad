@@ -17,7 +17,7 @@
     } while (0)
 
 // ─────────────────────────────────────────────────────────────────────────────
-// VARIANT A: cluster sum using global atomics (original baseline)
+// VARIANT A: global atomics (baseline)
 // ─────────────────────────────────────────────────────────────────────────────
 __global__ void kernel_cluster_sum_atomic(
     int num_rows, int local_cols, int num_col_labels,
@@ -35,9 +35,8 @@ __global__ void kernel_cluster_sum_atomic(
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// VARIANT B: cluster sum using shared memory
-//   Each block accumulates into shared memory first, reducing global atomic
-//   contention by up to blockDim.x times.
+// VARIANT B: shared memory — reduces global atomic contention by blockDim.x
+//   Each block accumulates into shared memory, flushes once to global.
 //   Dynamic shared mem: [num_clusters doubles | num_clusters ints]
 // ─────────────────────────────────────────────────────────────────────────────
 __global__ void kernel_cluster_sum_shared(
@@ -73,13 +72,9 @@ __global__ void kernel_cluster_sum_shared(
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// VARIANT C: cluster sum using warp shuffle instructions
-//   Threads within a warp exchange values in registers via __shfl_down_sync,
-//   avoiding shared memory entirely. Benchmarked for comparison purposes.
-//   NOTE: shown in tuning output but NOT selected for use — the non-uniform
-//   cluster distribution across warp lanes makes this variant unreliable for
-//   correctness across all input configurations. Atomic and shared variants
-//   are always preferred by the auto-tuner.
+// VARIANT C: warp shuffle — benchmarked for reference, not selected
+//   Uses __shfl_down_sync to exchange values in registers within a warp.
+//   Not selected by auto-tuner due to non-uniform cluster distribution.
 // ─────────────────────────────────────────────────────────────────────────────
 __global__ void kernel_cluster_sum_warp(
     int num_rows, int local_cols, int num_col_labels,
@@ -88,13 +83,10 @@ __global__ void kernel_cluster_sum_warp(
 {
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
     if (idx >= num_rows * local_cols) return;
-
     int row     = idx / local_cols;
     int col     = idx % local_cols;
     double item = (double)matrix[row * local_cols + col];
     int cluster = row_labels[row] * num_col_labels + col_labels[col];
-
-    // Warp-level reduction: adjacent lanes with matching cluster accumulate
     unsigned mask = 0xffffffff;
     int lane = threadIdx.x & 31;
     for (int offset = 16; offset > 0; offset >>= 1) {
@@ -102,7 +94,6 @@ __global__ void kernel_cluster_sum_warp(
         int    other_cluster = __shfl_down_sync(mask, cluster, offset);
         if (other_cluster == cluster) item += other_val;
     }
-    // Only lowest lane of each matching group writes to global
     int prev_cluster = __shfl_up_sync(mask, cluster, 1);
     if (lane == 0 || prev_cluster != cluster) {
         atomicAdd(&global_sum[cluster],   item);
@@ -170,9 +161,6 @@ __global__ void kernel_col_labels(
 
 // ─────────────────────────────────────────────────────────────────────────────
 // AUTO-TUNING
-//   Benchmarks all three cluster_sum variants AND all block sizes.
-//   Only atomic and shared are eligible for selection.
-//   Warp shuffle is benchmarked for reference/comparison in the report.
 // ─────────────────────────────────────────────────────────────────────────────
 enum class SumVariant { ATOMIC, SHARED };
 
@@ -207,14 +195,9 @@ TunedSizes auto_tune(
     int rank,
     int num_rows, int local_cols,
     int num_row_labels, int num_col_labels, int num_clusters,
-    float*      d_matrix,
-    label_type* d_row_labels,
-    label_type* d_col_labels,
-    double*     d_cluster_avg,
-    double*     d_local_sum,
-    int*        d_local_count,
-    double*     d_partial_dist,
-    int*        d_cols_updated)
+    float* d_matrix, label_type* d_row_labels, label_type* d_col_labels,
+    double* d_cluster_avg, double* d_local_sum, int* d_local_count,
+    double* d_partial_dist, int* d_cols_updated)
 {
     const std::vector<int> candidates = {64, 128, 256, 512, 1024};
     TunedSizes best = {256, SumVariant::ATOMIC, 256, 256, 256};
@@ -222,47 +205,35 @@ TunedSizes auto_tune(
 
     if (rank == 0) printf("\n[auto-tune] Benchmarking all kernel variants...\n");
 
-    // ── cluster_sum: all three variants, select only atomic or shared ─────────
+    // cluster_sum: all three variants, select only atomic or shared
     {
         float best_ms = 1e9f;
         if (rank == 0) printf("  cluster_sum (3 variants):\n");
-        if (rank == 0) printf("  %6s  %10s  %10s  %10s\n", "block", "atomic", "shared", "warp(ref)");
-
+        if (rank == 0) printf("  %6s  %10s  %10s  %10s\n","block","atomic","shared","warp(ref)");
         for (int t : candidates) {
             int blocks = (num_rows * local_cols + t - 1) / t;
-
             float ms_a = time_kernel_ms([&]() {
-                cudaMemset(d_local_sum,   0, num_clusters * sizeof(double));
-                cudaMemset(d_local_count, 0, num_clusters * sizeof(int));
+                cudaMemset(d_local_sum,   0, num_clusters*sizeof(double));
+                cudaMemset(d_local_count, 0, num_clusters*sizeof(int));
                 kernel_cluster_sum_atomic<<<blocks, t>>>(
                     num_rows, local_cols, num_col_labels,
-                    d_matrix, d_row_labels, d_col_labels,
-                    d_local_sum, d_local_count);
+                    d_matrix, d_row_labels, d_col_labels, d_local_sum, d_local_count);
             });
-
             float ms_s = time_kernel_ms([&]() {
-                cudaMemset(d_local_sum,   0, num_clusters * sizeof(double));
-                cudaMemset(d_local_count, 0, num_clusters * sizeof(int));
+                cudaMemset(d_local_sum,   0, num_clusters*sizeof(double));
+                cudaMemset(d_local_count, 0, num_clusters*sizeof(int));
                 kernel_cluster_sum_shared<<<blocks, t, shared_size>>>(
                     num_rows, local_cols, num_col_labels, num_clusters,
-                    d_matrix, d_row_labels, d_col_labels,
-                    d_local_sum, d_local_count);
+                    d_matrix, d_row_labels, d_col_labels, d_local_sum, d_local_count);
             });
-
-            // Warp variant: benchmarked for reference only, never selected
             float ms_w = time_kernel_ms([&]() {
-                cudaMemset(d_local_sum,   0, num_clusters * sizeof(double));
-                cudaMemset(d_local_count, 0, num_clusters * sizeof(int));
+                cudaMemset(d_local_sum,   0, num_clusters*sizeof(double));
+                cudaMemset(d_local_count, 0, num_clusters*sizeof(int));
                 kernel_cluster_sum_warp<<<blocks, t>>>(
                     num_rows, local_cols, num_col_labels,
-                    d_matrix, d_row_labels, d_col_labels,
-                    d_local_sum, d_local_count);
+                    d_matrix, d_row_labels, d_col_labels, d_local_sum, d_local_count);
             });
-
-            if (rank == 0)
-                printf("  %6d  %8.3fms  %8.3fms  %8.3fms\n", t, ms_a, ms_s, ms_w);
-
-            // Only atomic and shared are eligible for selection
+            if (rank == 0) printf("  %6d  %8.3fms  %8.3fms  %8.3fms\n", t, ms_a, ms_s, ms_w);
             if (ms_a < best_ms) { best_ms = ms_a; best.cluster_sum = t; best.sum_variant = SumVariant::ATOMIC; }
             if (ms_s < best_ms) { best_ms = ms_s; best.cluster_sum = t; best.sum_variant = SumVariant::SHARED; }
         }
@@ -270,7 +241,7 @@ TunedSizes auto_tune(
         if (rank == 0) printf("  => best: block=%d variant=%s\n", best.cluster_sum, v);
     }
 
-    // ── divide_avg ────────────────────────────────────────────────────────────
+    // divide_avg
     {
         float best_ms = 1e9f;
         if (rank == 0) printf("  divide_avg:\n");
@@ -286,7 +257,7 @@ TunedSizes auto_tune(
         if (rank == 0) printf("  => best: %d\n", best.divide_avg);
     }
 
-    // ── row_distances ─────────────────────────────────────────────────────────
+    // row_distances
     {
         float best_ms = 1e9f;
         if (rank == 0) printf("  row_distances:\n");
@@ -303,7 +274,7 @@ TunedSizes auto_tune(
         if (rank == 0) printf("  => best: %d\n", best.row_dist);
     }
 
-    // ── col_labels ────────────────────────────────────────────────────────────
+    // col_labels
     {
         float best_ms = 1e9f;
         if (rank == 0) printf("  col_labels:\n");
@@ -327,7 +298,7 @@ TunedSizes auto_tune(
         printf("[auto-tune] Config: cluster_sum=%d(%s) divide_avg=%d row_dist=%d col_labels=%d\n\n",
                best.cluster_sum, v, best.divide_avg, best.row_dist, best.col_labels);
 
-    // Reset all scratch arrays and re-upload labels
+    // Reset scratch arrays
     CUDA_CHECK(cudaMemset(d_local_sum,    0, num_clusters * sizeof(double)));
     CUDA_CHECK(cudaMemset(d_local_count,  0, num_clusters * sizeof(int)));
     CUDA_CHECK(cudaMemset(d_cluster_avg,  0, num_clusters * sizeof(double)));
@@ -343,22 +314,31 @@ void launch_cluster_sum(
     const TunedSizes& tuned, size_t shared_size,
     int num_rows, int local_cols, int num_col_labels, int num_clusters,
     const float* d_matrix, const label_type* d_row_labels,
-    const label_type* d_col_labels, double* d_local_sum, int* d_local_count)
+    const label_type* d_col_labels, double* d_local_sum, int* d_local_count,
+    cudaStream_t stream)
 {
     int blocks = (num_rows * local_cols + tuned.cluster_sum - 1) / tuned.cluster_sum;
     if (tuned.sum_variant == SumVariant::SHARED) {
-        kernel_cluster_sum_shared<<<blocks, tuned.cluster_sum, shared_size>>>(
+        kernel_cluster_sum_shared<<<blocks, tuned.cluster_sum, shared_size, stream>>>(
             num_rows, local_cols, num_col_labels, num_clusters,
             d_matrix, d_row_labels, d_col_labels, d_local_sum, d_local_count);
     } else {
-        kernel_cluster_sum_atomic<<<blocks, tuned.cluster_sum>>>(
+        kernel_cluster_sum_atomic<<<blocks, tuned.cluster_sum, 0, stream>>>(
             num_rows, local_cols, num_col_labels,
             d_matrix, d_row_labels, d_col_labels, d_local_sum, d_local_count);
     }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Main loop
+// Main loop: MPI + CUDA + shared mem + warp variants + auto-tuning + streams
+//
+// STREAMS OVERLAP PATTERN per iteration:
+//   stream_compute: kernel launch → async D→H copy
+//   CPU:            MPI_Allreduce (while GPU potentially running next op)
+//   stream_transfer: async H→D copy of reduced results
+//   stream_compute: next kernel (after sync on stream_transfer)
+//
+// Pinned (page-locked) host memory is required for true async transfers.
 // ─────────────────────────────────────────────────────────────────────────────
 void cluster_cuda(
     int rank, int nprocs,
@@ -372,6 +352,7 @@ void cluster_cuda(
     int    num_clusters = num_row_labels * num_col_labels;
     size_t shared_size  = num_clusters * (sizeof(double) + sizeof(int));
 
+    // ── Device allocations ────────────────────────────────────────────────────
     float*      d_matrix;
     label_type* d_col_labels, *d_row_labels;
     double*     d_cluster_avg, *d_local_sum, *d_partial_dist;
@@ -390,62 +371,91 @@ void cluster_cuda(
     CUDA_CHECK(cudaMemcpy(d_col_labels, local_col_labels, local_cols*sizeof(label_type),       cudaMemcpyHostToDevice));
     CUDA_CHECK(cudaMemcpy(d_row_labels, row_labels,       num_rows*sizeof(label_type),          cudaMemcpyHostToDevice));
 
+    // ── Pinned host buffers (required for async DMA transfers) ────────────────
+    double *h_local_sum,   *h_global_sum;
+    int    *h_local_count, *h_global_count;
+    double *h_local_dist,  *h_global_dist;
+    CUDA_CHECK(cudaMallocHost(&h_local_sum,    num_clusters*sizeof(double)));
+    CUDA_CHECK(cudaMallocHost(&h_local_count,  num_clusters*sizeof(int)));
+    CUDA_CHECK(cudaMallocHost(&h_global_sum,   num_clusters*sizeof(double)));
+    CUDA_CHECK(cudaMallocHost(&h_global_count, num_clusters*sizeof(int)));
+    CUDA_CHECK(cudaMallocHost(&h_local_dist,   num_rows*num_row_labels*sizeof(double)));
+    CUDA_CHECK(cudaMallocHost(&h_global_dist,  num_rows*num_row_labels*sizeof(double)));
+
+    // ── CUDA streams ──────────────────────────────────────────────────────────
+    cudaStream_t stream_compute, stream_transfer;
+    CUDA_CHECK(cudaStreamCreate(&stream_compute));
+    CUDA_CHECK(cudaStreamCreate(&stream_transfer));
+
+    // ── Auto-tune ─────────────────────────────────────────────────────────────
     TunedSizes tuned = auto_tune(
         rank, num_rows, local_cols, num_row_labels, num_col_labels, num_clusters,
         d_matrix, d_row_labels, d_col_labels, d_cluster_avg,
         d_local_sum, d_local_count, d_partial_dist, d_cols_updated);
 
-    // Re-upload labels after tuning — guaranteed clean state
+    // Re-upload labels after tuning
     CUDA_CHECK(cudaMemcpy(d_col_labels, local_col_labels, local_cols*sizeof(label_type), cudaMemcpyHostToDevice));
     CUDA_CHECK(cudaMemcpy(d_row_labels, row_labels,       num_rows*sizeof(label_type),   cudaMemcpyHostToDevice));
-
-    std::vector<double> h_local_sum(num_clusters);
-    std::vector<int>    h_local_count(num_clusters);
-    std::vector<double> h_global_sum(num_clusters);
-    std::vector<int>    h_global_count(num_clusters);
-    std::vector<double> h_local_dist(num_rows * num_row_labels);
-    std::vector<double> h_global_dist(num_rows * num_row_labels);
 
     int iteration = 0;
     auto before = std::chrono::high_resolution_clock::now();
 
     while (iteration < max_iterations) {
 
-        // STEP 1: calculate_cluster_average
-        CUDA_CHECK(cudaMemset(d_local_sum,   0, num_clusters * sizeof(double)));
-        CUDA_CHECK(cudaMemset(d_local_count, 0, num_clusters * sizeof(int)));
+        // ── STEP 1: calculate_cluster_average ─────────────────────────────────
+        // Zero scratch on stream_compute
+        CUDA_CHECK(cudaMemsetAsync(d_local_sum,   0, num_clusters*sizeof(double), stream_compute));
+        CUDA_CHECK(cudaMemsetAsync(d_local_count, 0, num_clusters*sizeof(int),    stream_compute));
+
+        // Launch cluster_sum kernel on stream_compute
         launch_cluster_sum(tuned, shared_size,
             num_rows, local_cols, num_col_labels, num_clusters,
             d_matrix, d_row_labels, d_col_labels,
-            d_local_sum, d_local_count);
-        CUDA_CHECK(cudaDeviceSynchronize());
+            d_local_sum, d_local_count, stream_compute);
 
-        CUDA_CHECK(cudaMemcpy(h_local_sum.data(),   d_local_sum,   num_clusters*sizeof(double), cudaMemcpyDeviceToHost));
-        CUDA_CHECK(cudaMemcpy(h_local_count.data(), d_local_count, num_clusters*sizeof(int),    cudaMemcpyDeviceToHost));
-        MPI_Allreduce(h_local_sum.data(),   h_global_sum.data(),   num_clusters, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
-        MPI_Allreduce(h_local_count.data(), h_global_count.data(), num_clusters, MPI_INT,    MPI_SUM, MPI_COMM_WORLD);
-        CUDA_CHECK(cudaMemcpy(d_local_sum,   h_global_sum.data(),   num_clusters*sizeof(double), cudaMemcpyHostToDevice));
-        CUDA_CHECK(cudaMemcpy(d_local_count, h_global_count.data(), num_clusters*sizeof(int),    cudaMemcpyHostToDevice));
+        // Async D→H transfer on stream_compute (starts as soon as kernel done)
+        CUDA_CHECK(cudaMemcpyAsync(h_local_sum,   d_local_sum,   num_clusters*sizeof(double), cudaMemcpyDeviceToHost, stream_compute));
+        CUDA_CHECK(cudaMemcpyAsync(h_local_count, d_local_count, num_clusters*sizeof(int),    cudaMemcpyDeviceToHost, stream_compute));
+
+        // Sync stream_compute — must have data on host before MPI
+        CUDA_CHECK(cudaStreamSynchronize(stream_compute));
+
+        // MPI Allreduce on CPU (GPU free during this)
+        MPI_Allreduce(h_local_sum,   h_global_sum,   num_clusters, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
+        MPI_Allreduce(h_local_count, h_global_count, num_clusters, MPI_INT,    MPI_SUM, MPI_COMM_WORLD);
+
+        // Async H→D transfer on stream_transfer
+        CUDA_CHECK(cudaMemcpyAsync(d_local_sum,   h_global_sum,   num_clusters*sizeof(double), cudaMemcpyHostToDevice, stream_transfer));
+        CUDA_CHECK(cudaMemcpyAsync(d_local_count, h_global_count, num_clusters*sizeof(int),    cudaMemcpyHostToDevice, stream_transfer));
+        CUDA_CHECK(cudaStreamSynchronize(stream_transfer));
+
+        // divide_avg on stream_compute
         {
             int blocks = (num_clusters + tuned.divide_avg - 1) / tuned.divide_avg;
-            kernel_divide_avg<<<blocks, tuned.divide_avg>>>(
+            kernel_divide_avg<<<blocks, tuned.divide_avg, 0, stream_compute>>>(
                 num_clusters, d_local_sum, d_local_count, d_cluster_avg);
-            CUDA_CHECK(cudaDeviceSynchronize());
         }
 
-        // STEP 2: update_row_labels
+        // ── STEP 2: update_row_labels ─────────────────────────────────────────
+        // row_distances on stream_compute (overlaps with H→D transfers if any)
         {
             int blocks = (num_rows * num_row_labels + tuned.row_dist - 1) / tuned.row_dist;
-            kernel_row_distances<<<blocks, tuned.row_dist>>>(
+            kernel_row_distances<<<blocks, tuned.row_dist, 0, stream_compute>>>(
                 num_rows, local_cols, num_row_labels, num_col_labels,
                 d_matrix, d_col_labels, d_cluster_avg, d_partial_dist);
-            CUDA_CHECK(cudaDeviceSynchronize());
         }
-        CUDA_CHECK(cudaMemcpy(h_local_dist.data(), d_partial_dist,
-                              num_rows*num_row_labels*sizeof(double), cudaMemcpyDeviceToHost));
-        MPI_Allreduce(h_local_dist.data(), h_global_dist.data(),
+
+        // Async D→H of partial distances
+        CUDA_CHECK(cudaMemcpyAsync(h_local_dist, d_partial_dist,
+                                   num_rows*num_row_labels*sizeof(double),
+                                   cudaMemcpyDeviceToHost, stream_compute));
+        CUDA_CHECK(cudaStreamSynchronize(stream_compute));
+
+        // MPI Allreduce partial distances
+        MPI_Allreduce(h_local_dist, h_global_dist,
                       num_rows*num_row_labels, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
 
+        // Pick best row label on CPU (tiny: 40 x num_row_labels)
         int    rows_updated   = 0;
         double total_dist_row = 0.0;
         for (int i = 0; i < num_rows; i++) {
@@ -457,20 +467,29 @@ void cluster_cuda(
             if (row_labels[i] != best) { row_labels[i] = best; rows_updated++; }
             total_dist_row += bd;
         }
-        CUDA_CHECK(cudaMemcpy(d_row_labels, row_labels, num_rows*sizeof(label_type), cudaMemcpyHostToDevice));
 
-        // STEP 3: update_col_labels
-        CUDA_CHECK(cudaMemset(d_cols_updated, 0, sizeof(int)));
+        // Async H→D updated row_labels on stream_transfer
+        CUDA_CHECK(cudaMemcpyAsync(d_row_labels, row_labels,
+                                   num_rows*sizeof(label_type),
+                                   cudaMemcpyHostToDevice, stream_transfer));
+        CUDA_CHECK(cudaStreamSynchronize(stream_transfer));
+
+        // ── STEP 3: update_col_labels ─────────────────────────────────────────
+        CUDA_CHECK(cudaMemsetAsync(d_cols_updated, 0, sizeof(int), stream_compute));
         {
             int blocks = (local_cols + tuned.col_labels - 1) / tuned.col_labels;
-            kernel_col_labels<<<blocks, tuned.col_labels>>>(
+            kernel_col_labels<<<blocks, tuned.col_labels, 0, stream_compute>>>(
                 num_rows, local_cols, num_col_labels,
                 d_matrix, d_row_labels, d_col_labels,
                 d_cluster_avg, d_cols_updated);
-            CUDA_CHECK(cudaDeviceSynchronize());
         }
+
+        // Async D→H changed count
         int local_cols_updated = 0;
-        CUDA_CHECK(cudaMemcpy(&local_cols_updated, d_cols_updated, sizeof(int), cudaMemcpyDeviceToHost));
+        CUDA_CHECK(cudaMemcpyAsync(&local_cols_updated, d_cols_updated,
+                                   sizeof(int), cudaMemcpyDeviceToHost, stream_compute));
+        CUDA_CHECK(cudaStreamSynchronize(stream_compute));
+
         int global_cols_updated = 0;
         MPI_Allreduce(&local_cols_updated, &global_cols_updated, 1, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
 
@@ -497,9 +516,19 @@ void cluster_cuda(
 
     CUDA_CHECK(cudaMemcpy(local_col_labels, d_col_labels, local_cols*sizeof(label_type), cudaMemcpyDeviceToHost));
 
+    // Free device memory
     cudaFree(d_matrix); cudaFree(d_col_labels); cudaFree(d_row_labels);
     cudaFree(d_cluster_avg); cudaFree(d_local_sum); cudaFree(d_local_count);
     cudaFree(d_partial_dist); cudaFree(d_cols_updated);
+
+    // Free pinned host memory
+    cudaFreeHost(h_local_sum);   cudaFreeHost(h_local_count);
+    cudaFreeHost(h_global_sum);  cudaFreeHost(h_global_count);
+    cudaFreeHost(h_local_dist);  cudaFreeHost(h_global_dist);
+
+    // Destroy streams
+    cudaStreamDestroy(stream_compute);
+    cudaStreamDestroy(stream_transfer);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
