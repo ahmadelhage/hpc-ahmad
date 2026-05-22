@@ -36,6 +36,9 @@ cgc_cuda_bonus_tuned: $(SRC)/cgc_cuda_bonus_tuned.cu $(SRC)/common.h
 	-Xcompiler="-march=native,-Wall,-Wextra,-Wnarrowing,-Wparentheses,-Werror,-Wno-unused-parameter,-Wno-cast-function-type" \
 	-x=cu -ccbin=mpic++ $(CUFLAGS) $(INCLUDES)
 
+cgc_mpi_omp: $(SRC)/cgc_mpi_omp.cpp $(SRC)/common.h
+	$(MPICC) -o $@ $(SRC)/cgc_mpi_omp.cpp $(CFLAGS) $(INCLUDES)
+
 submit:
 	tar -czf submission.tar.gz src/ Makefile *.job *.pdf
 
