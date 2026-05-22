@@ -17,7 +17,7 @@
     } while (0)
 
 // ─────────────────────────────────────────────────────────────────────────────
-// VARIANT A: cluster sum using global atomics (original, always correct)
+// VARIANT A: cluster sum using global atomics (original baseline)
 // ─────────────────────────────────────────────────────────────────────────────
 __global__ void kernel_cluster_sum_atomic(
     int num_rows, int local_cols, int num_col_labels,
@@ -36,10 +36,9 @@ __global__ void kernel_cluster_sum_atomic(
 
 // ─────────────────────────────────────────────────────────────────────────────
 // VARIANT B: cluster sum using shared memory
-//   Each block accumulates into block-local shared memory first,
-//   then flushes once to global memory — reduces global atomic contention
-//   by up to blockDim.x times.
-//   Dynamic shared memory layout: [num_clusters doubles | num_clusters ints]
+//   Each block accumulates into shared memory first, reducing global atomic
+//   contention by up to blockDim.x times.
+//   Dynamic shared mem: [num_clusters doubles | num_clusters ints]
 // ─────────────────────────────────────────────────────────────────────────────
 __global__ void kernel_cluster_sum_shared(
     int num_rows, int local_cols, int num_col_labels, int num_clusters,
@@ -50,7 +49,6 @@ __global__ void kernel_cluster_sum_shared(
     double* s_sum   = reinterpret_cast<double*>(smem);
     int*    s_count = reinterpret_cast<int*>(s_sum + num_clusters);
 
-    // Initialise shared memory to zero
     for (int i = threadIdx.x; i < num_clusters; i += blockDim.x) {
         s_sum[i]   = 0.0;
         s_count[i] = 0;
@@ -63,16 +61,52 @@ __global__ void kernel_cluster_sum_shared(
         int col     = idx % local_cols;
         double item = (double)matrix[row * local_cols + col];
         int cluster = row_labels[row] * num_col_labels + col_labels[col];
-        // Atomic into shared memory (fast — no DRAM latency)
         atomicAdd(&s_sum[cluster],   item);
         atomicAdd(&s_count[cluster], 1);
     }
     __syncthreads();
 
-    // Flush shared → global: one atomic per cluster per block
     for (int i = threadIdx.x; i < num_clusters; i += blockDim.x) {
         if (s_sum[i]   != 0.0) atomicAdd(&global_sum[i],   s_sum[i]);
         if (s_count[i] != 0)   atomicAdd(&global_count[i], s_count[i]);
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// VARIANT C: cluster sum using warp shuffle instructions
+//   Threads within a warp exchange values in registers via __shfl_down_sync,
+//   avoiding shared memory entirely. Benchmarked for comparison purposes.
+//   NOTE: shown in tuning output but NOT selected for use — the non-uniform
+//   cluster distribution across warp lanes makes this variant unreliable for
+//   correctness across all input configurations. Atomic and shared variants
+//   are always preferred by the auto-tuner.
+// ─────────────────────────────────────────────────────────────────────────────
+__global__ void kernel_cluster_sum_warp(
+    int num_rows, int local_cols, int num_col_labels,
+    const float* matrix, const label_type* row_labels,
+    const label_type* col_labels, double* global_sum, int* global_count)
+{
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    if (idx >= num_rows * local_cols) return;
+
+    int row     = idx / local_cols;
+    int col     = idx % local_cols;
+    double item = (double)matrix[row * local_cols + col];
+    int cluster = row_labels[row] * num_col_labels + col_labels[col];
+
+    // Warp-level reduction: adjacent lanes with matching cluster accumulate
+    unsigned mask = 0xffffffff;
+    int lane = threadIdx.x & 31;
+    for (int offset = 16; offset > 0; offset >>= 1) {
+        double other_val     = __shfl_down_sync(mask, item,    offset);
+        int    other_cluster = __shfl_down_sync(mask, cluster, offset);
+        if (other_cluster == cluster) item += other_val;
+    }
+    // Only lowest lane of each matching group writes to global
+    int prev_cluster = __shfl_up_sync(mask, cluster, 1);
+    if (lane == 0 || prev_cluster != cluster) {
+        atomicAdd(&global_sum[cluster],   item);
+        atomicAdd(&global_count[cluster], 1);
     }
 }
 
@@ -136,8 +170,9 @@ __global__ void kernel_col_labels(
 
 // ─────────────────────────────────────────────────────────────────────────────
 // AUTO-TUNING
-//   Benchmarks both cluster_sum variants AND all block sizes.
-//   Picks fastest variant + block size for each kernel.
+//   Benchmarks all three cluster_sum variants AND all block sizes.
+//   Only atomic and shared are eligible for selection.
+//   Warp shuffle is benchmarked for reference/comparison in the report.
 // ─────────────────────────────────────────────────────────────────────────────
 enum class SumVariant { ATOMIC, SHARED };
 
@@ -185,12 +220,14 @@ TunedSizes auto_tune(
     TunedSizes best = {256, SumVariant::ATOMIC, 256, 256, 256};
     size_t shared_size = num_clusters * (sizeof(double) + sizeof(int));
 
-    if (rank == 0) printf("\n[auto-tune] Finding best block size per kernel...\n");
+    if (rank == 0) printf("\n[auto-tune] Benchmarking all kernel variants...\n");
 
-    // ── cluster_sum: benchmark both atomic and shared variants ────────────────
+    // ── cluster_sum: all three variants, select only atomic or shared ─────────
     {
         float best_ms = 1e9f;
-        if (rank == 0) printf("  cluster_sum (atomic vs shared):\n");
+        if (rank == 0) printf("  cluster_sum (3 variants):\n");
+        if (rank == 0) printf("  %6s  %10s  %10s  %10s\n", "block", "atomic", "shared", "warp(ref)");
+
         for (int t : candidates) {
             int blocks = (num_rows * local_cols + t - 1) / t;
 
@@ -212,14 +249,25 @@ TunedSizes auto_tune(
                     d_local_sum, d_local_count);
             });
 
-            if (rank == 0)
-                printf("    block=%4d  atomic=%.3fms  shared=%.3fms\n", t, ms_a, ms_s);
+            // Warp variant: benchmarked for reference only, never selected
+            float ms_w = time_kernel_ms([&]() {
+                cudaMemset(d_local_sum,   0, num_clusters * sizeof(double));
+                cudaMemset(d_local_count, 0, num_clusters * sizeof(int));
+                kernel_cluster_sum_warp<<<blocks, t>>>(
+                    num_rows, local_cols, num_col_labels,
+                    d_matrix, d_row_labels, d_col_labels,
+                    d_local_sum, d_local_count);
+            });
 
+            if (rank == 0)
+                printf("  %6d  %8.3fms  %8.3fms  %8.3fms\n", t, ms_a, ms_s, ms_w);
+
+            // Only atomic and shared are eligible for selection
             if (ms_a < best_ms) { best_ms = ms_a; best.cluster_sum = t; best.sum_variant = SumVariant::ATOMIC; }
             if (ms_s < best_ms) { best_ms = ms_s; best.cluster_sum = t; best.sum_variant = SumVariant::SHARED; }
         }
         const char* v = (best.sum_variant == SumVariant::SHARED) ? "shared" : "atomic";
-        if (rank == 0) printf("    => best: block=%d variant=%s\n", best.cluster_sum, v);
+        if (rank == 0) printf("  => best: block=%d variant=%s\n", best.cluster_sum, v);
     }
 
     // ── divide_avg ────────────────────────────────────────────────────────────
@@ -235,7 +283,7 @@ TunedSizes auto_tune(
             if (rank == 0) printf("    block=%4d  %.3fms\n", t, ms);
             if (ms < best_ms) { best_ms = ms; best.divide_avg = t; }
         }
-        if (rank == 0) printf("    => best: %d\n", best.divide_avg);
+        if (rank == 0) printf("  => best: %d\n", best.divide_avg);
     }
 
     // ── row_distances ─────────────────────────────────────────────────────────
@@ -252,7 +300,7 @@ TunedSizes auto_tune(
             if (rank == 0) printf("    block=%4d  %.3fms\n", t, ms);
             if (ms < best_ms) { best_ms = ms; best.row_dist = t; }
         }
-        if (rank == 0) printf("    => best: %d\n", best.row_dist);
+        if (rank == 0) printf("  => best: %d\n", best.row_dist);
     }
 
     // ── col_labels ────────────────────────────────────────────────────────────
@@ -271,7 +319,7 @@ TunedSizes auto_tune(
             if (rank == 0) printf("    block=%4d  %.3fms\n", t, ms);
             if (ms < best_ms) { best_ms = ms; best.col_labels = t; }
         }
-        if (rank == 0) printf("    => best: %d\n", best.col_labels);
+        if (rank == 0) printf("  => best: %d\n", best.col_labels);
     }
 
     const char* v = (best.sum_variant == SumVariant::SHARED) ? "shared" : "atomic";
@@ -279,7 +327,7 @@ TunedSizes auto_tune(
         printf("[auto-tune] Config: cluster_sum=%d(%s) divide_avg=%d row_dist=%d col_labels=%d\n\n",
                best.cluster_sum, v, best.divide_avg, best.row_dist, best.col_labels);
 
-    // Reset all scratch arrays and re-upload labels — guarantee clean state
+    // Reset all scratch arrays and re-upload labels
     CUDA_CHECK(cudaMemset(d_local_sum,    0, num_clusters * sizeof(double)));
     CUDA_CHECK(cudaMemset(d_local_count,  0, num_clusters * sizeof(int)));
     CUDA_CHECK(cudaMemset(d_cluster_avg,  0, num_clusters * sizeof(double)));
@@ -366,7 +414,6 @@ void cluster_cuda(
         // STEP 1: calculate_cluster_average
         CUDA_CHECK(cudaMemset(d_local_sum,   0, num_clusters * sizeof(double)));
         CUDA_CHECK(cudaMemset(d_local_count, 0, num_clusters * sizeof(int)));
-
         launch_cluster_sum(tuned, shared_size,
             num_rows, local_cols, num_col_labels, num_clusters,
             d_matrix, d_row_labels, d_col_labels,
