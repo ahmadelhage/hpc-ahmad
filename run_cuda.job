@@ -3,8 +3,8 @@
 #SBATCH --job-name=cgc_cuda
 #SBATCH --output=job_%j.out
 #SBATCH --error=job_%j.err
-#SBATCH --nodes=12
-#SBATCH --ntasks-per-node=32
+#SBATCH --nodes=1
+#SBATCH --ntasks-per-node=1
 #SBATCH --cpus-per-task=1
 #SBATCH --gres=gpu:A4000-Ada:1
 #SBATCH --time=00:15:00
