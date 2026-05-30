@@ -12,7 +12,7 @@
 
 PROG=cgc_cuda_bonus_tuned
 DATA=/var/scratch/bwn200/HPC_data/spring_data_xxl.npy
-LABELS=/var/scratch/bwn200/HPC_data/spring_labels_xxl_3x20.txt
+LABELS=/var/scratch/bwn200/HPC_data/spring_labels_xxl_5x100.txt
 OUT=labels_${SLURM_JOB_ID}.txt
 
 module load openmpi4/4.1.6
