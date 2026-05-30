@@ -286,7 +286,7 @@ TunedSizes auto_tune(
     const char* v = (best.sum_variant == SumVariant::SHARED) ? "shared" : "atomic";
     if (rank == 0)
         printf("[auto-tune] Config: cluster_sum=%d(%s) divide_avg=%d row_dist=%d col_labels=%d\n\n",
-               best.cluster_sum, v, best.divide_avg, best.row_dist, best.col_labels);
+            best.cluster_sum, v, best.divide_avg, best.row_dist, best.col_labels);
 
     // Reset scratch arrays
     CUDA_CHECK(cudaMemset(d_local_sum,    0, num_clusters * sizeof(double)));
@@ -317,8 +317,7 @@ void launch_cluster_sum(
     }
 }
 
-// Main loop: MPI + CUDA + shared mem + warp variants + auto-tuning + streams
-//
+
 // STREAMS OVERLAP PATTERN per iteration:
 //   stream_compute: kernel launch → async D→H copy
 //   CPU:            MPI_Allreduce (while GPU potentially running next op)
@@ -433,13 +432,13 @@ void cluster_cuda(
 
         // Async D→H of partial distances
         CUDA_CHECK(cudaMemcpyAsync(h_local_dist, d_partial_dist,
-                                   num_rows*num_row_labels*sizeof(double),
-                                   cudaMemcpyDeviceToHost, stream_compute));
+                                num_rows*num_row_labels*sizeof(double),
+                                cudaMemcpyDeviceToHost, stream_compute));
         CUDA_CHECK(cudaStreamSynchronize(stream_compute));
 
         // MPI Allreduce partial distances
         MPI_Allreduce(h_local_dist, h_global_dist,
-                      num_rows*num_row_labels, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
+                    num_rows*num_row_labels, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
 
         // Pick best row label on CPU (tiny: 40 x num_row_labels)
         int    rows_updated   = 0;
@@ -456,8 +455,8 @@ void cluster_cuda(
 
         // Async H→D updated row_labels on stream_transfer
         CUDA_CHECK(cudaMemcpyAsync(d_row_labels, row_labels,
-                                   num_rows*sizeof(label_type),
-                                   cudaMemcpyHostToDevice, stream_transfer));
+                                num_rows*sizeof(label_type),
+                                cudaMemcpyHostToDevice, stream_transfer));
         CUDA_CHECK(cudaStreamSynchronize(stream_transfer));
 
         // update_col_labels on stream_compute (overlaps with H→D transfer if any)
@@ -473,7 +472,7 @@ void cluster_cuda(
         // Async D→H changed count
         int local_cols_updated = 0;
         CUDA_CHECK(cudaMemcpyAsync(&local_cols_updated, d_cols_updated,
-                                   sizeof(int), cudaMemcpyDeviceToHost, stream_compute));
+                                sizeof(int), cudaMemcpyDeviceToHost, stream_compute));
         CUDA_CHECK(cudaStreamSynchronize(stream_compute));
 
         int global_cols_updated = 0;
@@ -488,7 +487,7 @@ void cluster_cuda(
 
         if (rank == 0)
             std::cout << "iteration " << iteration << ": " << num_updated
-                      << " labels were updated, average error is " << average_dist << "\n";
+                    << " labels were updated, average error is " << average_dist << "\n";
 
         if (num_updated == 0) break;
     }
@@ -533,9 +532,9 @@ int main(int argc, const char* argv[]) {
 
     if (rank == 0) {
         if (!parse_arguments(argc, argv, &num_rows, &num_cols,
-                             &num_row_labels, &num_col_labels,
-                             &matrix, &row_labels, &col_labels,
-                             &output_file, &max_iter))
+                            &num_row_labels, &num_col_labels,
+                            &matrix, &row_labels, &col_labels,
+                            &output_file, &max_iter))
             MPI_Abort(MPI_COMM_WORLD, EXIT_FAILURE);
     }
 
@@ -562,23 +561,23 @@ int main(int argc, const char* argv[]) {
     if (rank != 0) row_labels.resize(num_rows);
     MPI_Bcast(row_labels.data(), num_rows, MPI_INT, 0, MPI_COMM_WORLD);
     MPI_Scatterv((rank==0)?col_labels.data():nullptr,
-                 sendcounts.data(), displs.data(), MPI_INT,
-                 local_col_labels.data(), local_cols, MPI_INT,
-                 0, MPI_COMM_WORLD);
+                sendcounts.data(), displs.data(), MPI_INT,
+                local_col_labels.data(), local_cols, MPI_INT,
+                0, MPI_COMM_WORLD);
 
     std::vector<float> local_matrix(num_rows * local_cols);
     for (int i = 0; i < num_rows; i++) {
         const float* src = (rank==0) ? (matrix.data()+i*num_cols) : nullptr;
         MPI_Scatterv(src, sendcounts.data(), displs.data(), MPI_FLOAT,
-                     local_matrix.data()+i*local_cols, local_cols, MPI_FLOAT,
-                     0, MPI_COMM_WORLD);
+                    local_matrix.data()+i*local_cols, local_cols, MPI_FLOAT,
+                    0, MPI_COMM_WORLD);
     }
     if (rank==0) { matrix.clear(); matrix.shrink_to_fit(); }
 
     cluster_cuda(rank, nprocs, num_rows, num_cols, local_cols,
-                 num_row_labels, num_col_labels,
-                 local_matrix.data(), row_labels.data(),
-                 local_col_labels.data(), max_iter);
+                num_row_labels, num_col_labels,
+                local_matrix.data(), row_labels.data(),
+                local_col_labels.data(), max_iter);
 
     if (rank==0) col_labels.resize(num_cols);
     MPI_Gatherv(local_col_labels.data(), local_cols, MPI_INT,
