@@ -479,10 +479,6 @@ std::pair<int, double> update_row_labels(
         g.d_global_dist, g.d_row_labels,
         g.d_rows_updated, g.d_total_dist);
 
-    CUDA_CHECK(cudaMemcpy(row_labels, g.d_row_labels,
-                      num_rows * sizeof(label_type), cudaMemcpyDeviceToHost));
-    CUDA_CHECK(cudaMemcpy(local_col_labels, g.d_col_labels,
-                      local_cols * sizeof(label_type), cudaMemcpyDeviceToHost));
 
     // Copy results back to host (tiny: 1 int + 1 double)
     int    rows_updated = 0;
@@ -699,6 +695,11 @@ int main(int argc, const char* argv[]) {
                 sendcounts.data(), displs.data(), MPI_INT,
                 0, MPI_COMM_WORLD);
 
+    // Copy final labels back to host and write output file
+    CUDA_CHECK(cudaMemcpy(row_labels, g.d_row_labels,
+                        num_rows * sizeof(label_type), cudaMemcpyDeviceToHost));
+    CUDA_CHECK(cudaMemcpy(local_col_labels, g.d_col_labels,
+                        local_cols * sizeof(label_type), cudaMemcpyDeviceToHost));
     if (rank==0)
         write_labels(output_file, num_rows, num_cols, row_labels.data(), col_labels.data());
 
