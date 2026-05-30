@@ -16,9 +16,7 @@
         }                                                                       \
     } while (0)
 
-// ─────────────────────────────────────────────────────────────────────────────
-// VARIANT A: cluster sum using global atomics (baseline reference)
-// ─────────────────────────────────────────────────────────────────────────────
+// cluster sum using global atomics (baseline)
 __global__ void kernel_cluster_sum_atomic(
     int num_rows, int local_cols, int num_col_labels,
     const float* matrix, const label_type* row_labels,
@@ -34,12 +32,9 @@ __global__ void kernel_cluster_sum_atomic(
     atomicAdd(&local_count[cluster], 1);
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// VARIANT B: cluster sum using shared memory
+// variant 1 cluster sum using shared memory
 //   Each block accumulates into block-local shared memory, reducing global
 //   atomic contention by up to blockDim.x times.
-//   Dynamic shared mem layout: [num_clusters doubles | num_clusters ints]
-// ─────────────────────────────────────────────────────────────────────────────
 __global__ void kernel_cluster_sum_shared(
     int num_rows, int local_cols, int num_col_labels, int num_clusters,
     const float* matrix, const label_type* row_labels,
@@ -72,12 +67,10 @@ __global__ void kernel_cluster_sum_shared(
     }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// VARIANT C: cluster sum using warp shuffle
-//   Uses __shfl_down_sync to exchange values in registers between warp lanes.
-//   Benchmarked for reference — not selected by auto-tuner due to correctness
+// variant 2: cluster sum using warp shuffle
+//   Uses shfl_down_sync to exchange values in registers between warp lanes.
+//   Benchmarked for reference only not selected by auto-tuner due to correctness
 //   issues with non-uniform cluster distributions across warp lanes.
-// ─────────────────────────────────────────────────────────────────────────────
 __global__ void kernel_cluster_sum_warp(
     int num_rows, int local_cols, int num_col_labels,
     const float* matrix, const label_type* row_labels,
@@ -103,9 +96,7 @@ __global__ void kernel_cluster_sum_warp(
     }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// KERNEL: divide global sums by counts to get cluster averages
-// ─────────────────────────────────────────────────────────────────────────────
+// divide global sums by counts to get cluster averages
 __global__ void kernel_divide_avg(
     int num_clusters, const double* global_sum,
     const int* global_count, double* cluster_avg)
@@ -115,9 +106,7 @@ __global__ void kernel_divide_avg(
     cluster_avg[idx] = global_sum[idx] / (double)global_count[idx];
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// KERNEL: compute partial row-label distances (one thread per row x candidate)
-// ─────────────────────────────────────────────────────────────────────────────
+// compute partial row-label distances (one thread per row x candidate)
 __global__ void kernel_row_distances(
     int num_rows, int local_cols, int num_row_labels, int num_col_labels,
     const float* matrix, const label_type* col_labels,
@@ -137,11 +126,7 @@ __global__ void kernel_row_distances(
     partial_dist[row * num_row_labels + k] = dist;
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// KERNEL: select best row label on GPU (runs after MPI Allreduce)
-//   Each thread handles one row. Scans global_dist to find the minimum.
-//   Writes new label to d_row_labels and atomicAdds to rows_updated.
-// ─────────────────────────────────────────────────────────────────────────────
+// select best row label on GPU (runs after MPI Allreduce)
 __global__ void kernel_select_row_labels(
     int num_rows, int num_row_labels,
     const double* global_dist,
@@ -168,9 +153,7 @@ __global__ void kernel_select_row_labels(
     atomicAdd(total_dist_out, best_dist);
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// KERNEL: update column labels (one thread per local column)
-// ─────────────────────────────────────────────────────────────────────────────
+// update column labels (one thread per local column)
 __global__ void kernel_col_labels(
     int num_rows, int local_cols, int num_col_labels,
     const float* matrix, const label_type* row_labels,
@@ -196,9 +179,7 @@ __global__ void kernel_col_labels(
     }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// AUTO-TUNING: benchmark all variants and block sizes, pick fastest
-// ─────────────────────────────────────────────────────────────────────────────
+// auto tuning: benchmark all variants and block sizes, pick fastest
 enum class SumVariant { ATOMIC, SHARED };
 
 struct TunedSizes {
@@ -368,9 +349,7 @@ TunedSizes auto_tune(
     return best;
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Helper: launch whichever cluster_sum variant was chosen
-// ─────────────────────────────────────────────────────────────────────────────
+// helper: launch whichever cluster_sum variant was chosen
 void launch_cluster_sum(
     const TunedSizes& tuned, size_t shared_size,
     int num_rows, int local_cols, int num_col_labels, int num_clusters,
@@ -390,9 +369,7 @@ void launch_cluster_sum(
     }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// GPU CONTEXT: all device pointers and streams in one struct for clean passing
-// ─────────────────────────────────────────────────────────────────────────────
+// GPU context struct to hold all device pointers, host buffers, streams, and shared memory size
 struct GpuContext {
     float*      d_matrix;
     label_type* d_col_labels, *d_row_labels;
@@ -406,11 +383,8 @@ struct GpuContext {
     size_t       shared_size;
 };
 
-// ─────────────────────────────────────────────────────────────────────────────
 // STEP 1: calculate_cluster_average
-//   Launches cluster_sum kernel, copies partial sums to host, does
-//   MPI_Allreduce, copies back, then runs divide_avg kernel.
-// ─────────────────────────────────────────────────────────────────────────────
+//   Launches cluster_sum kernel, copies partial sums to host, does MPI_Allreduce, copies back, then runs divide_avg kernel.
 void calculate_cluster_average(
     int num_clusters, const TunedSizes& tuned,
     int num_rows, int local_cols, int num_col_labels,
@@ -440,13 +414,10 @@ void calculate_cluster_average(
         num_clusters, g.d_local_sum, g.d_local_count, g.d_cluster_avg);
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // STEP 2: update_row_labels
 //   Launches row_distances kernel, copies partial distances to host,
 //   does MPI_Allreduce, copies global distances back to GPU, then
-//   kernel_select_row_labels runs entirely on GPU to pick best labels.
-//   Returns {rows_updated, total_dist}.
-// ─────────────────────────────────────────────────────────────────────────────
+//   kernel_select_row_labels runs entirely picks best labels and returns results back to host.
 std::pair<int, double> update_row_labels(
     int num_rows, int local_cols, int num_row_labels, int num_col_labels,
     const TunedSizes& tuned, GpuContext& g)
@@ -458,15 +429,15 @@ std::pair<int, double> update_row_labels(
         g.d_matrix, g.d_col_labels, g.d_cluster_avg, g.d_partial_dist);
 
     CUDA_CHECK(cudaMemcpyAsync(g.h_local_dist, g.d_partial_dist,
-                               work*sizeof(double), cudaMemcpyDeviceToHost, g.stream_compute));
+                            work*sizeof(double), cudaMemcpyDeviceToHost, g.stream_compute));
     CUDA_CHECK(cudaStreamSynchronize(g.stream_compute));
 
     MPI_Allreduce(g.h_local_dist, g.h_global_dist,
-                  work, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
+                work, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
 
     // Copy global distances back to GPU for kernel_select_row_labels
     CUDA_CHECK(cudaMemcpyAsync(g.d_global_dist, g.h_global_dist,
-                               work*sizeof(double), cudaMemcpyHostToDevice, g.stream_transfer));
+                            work*sizeof(double), cudaMemcpyHostToDevice, g.stream_transfer));
     CUDA_CHECK(cudaStreamSynchronize(g.stream_transfer));
 
     // Select best row labels entirely on GPU
@@ -490,10 +461,7 @@ std::pair<int, double> update_row_labels(
     return {rows_updated, total_dist};
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // STEP 3: update_col_labels
-//   Fully local — no MPI needed. Returns {cols_updated_globally, 0}.
-// ─────────────────────────────────────────────────────────────────────────────
 std::pair<int, double> update_col_labels(
     int num_rows, int local_cols, int num_col_labels,
     const TunedSizes& tuned, GpuContext& g)
@@ -508,7 +476,7 @@ std::pair<int, double> update_col_labels(
 
     int local_cols_updated = 0;
     CUDA_CHECK(cudaMemcpyAsync(&local_cols_updated, g.d_cols_updated,
-                               sizeof(int), cudaMemcpyDeviceToHost, g.stream_compute));
+                            sizeof(int), cudaMemcpyDeviceToHost, g.stream_compute));
     CUDA_CHECK(cudaStreamSynchronize(g.stream_compute));
 
     int global_cols_updated = 0;
@@ -517,9 +485,7 @@ std::pair<int, double> update_col_labels(
     return {global_cols_updated, 0.0};
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Main clustering loop
-// ─────────────────────────────────────────────────────────────────────────────
 void cluster_cuda(
     int rank, int nprocs,
     int num_rows, int num_cols, int local_cols,
@@ -594,7 +560,7 @@ void cluster_cuda(
 
         if (rank == 0)
             std::cout << "iteration " << iteration << ": " << num_updated
-                      << " labels were updated, average error is " << average_dist << "\n";
+                    << " labels were updated, average error is " << average_dist << "\n";
 
         if (num_updated == 0) break;
     }
@@ -607,7 +573,7 @@ void cluster_cuda(
     }
 
     CUDA_CHECK(cudaMemcpy(local_col_labels, g.d_col_labels,
-                          local_cols*sizeof(label_type), cudaMemcpyDeviceToHost));
+                        local_cols*sizeof(label_type), cudaMemcpyDeviceToHost));
     CUDA_CHECK(cudaMemcpy(row_labels, g.d_row_labels,
                         num_rows * sizeof(label_type), cudaMemcpyDeviceToHost));
     CUDA_CHECK(cudaMemcpy(local_col_labels, g.d_col_labels,
@@ -628,9 +594,7 @@ void cluster_cuda(
     cudaStreamDestroy(g.stream_transfer);
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // main
-// ─────────────────────────────────────────────────────────────────────────────
 int main(int argc, const char* argv[]) {
     MPI_Init(nullptr, nullptr);
     int rank, nprocs;
@@ -646,9 +610,9 @@ int main(int argc, const char* argv[]) {
 
     if (rank == 0) {
         if (!parse_arguments(argc, argv, &num_rows, &num_cols,
-                             &num_row_labels, &num_col_labels,
-                             &matrix, &row_labels, &col_labels,
-                             &output_file, &max_iter))
+                            &num_row_labels, &num_col_labels,
+                            &matrix, &row_labels, &col_labels,
+                            &output_file, &max_iter))
             MPI_Abort(MPI_COMM_WORLD, EXIT_FAILURE);
     }
 
@@ -675,23 +639,23 @@ int main(int argc, const char* argv[]) {
     if (rank != 0) row_labels.resize(num_rows);
     MPI_Bcast(row_labels.data(), num_rows, MPI_INT, 0, MPI_COMM_WORLD);
     MPI_Scatterv((rank==0)?col_labels.data():nullptr,
-                 sendcounts.data(), displs.data(), MPI_INT,
-                 local_col_labels.data(), local_cols, MPI_INT,
-                 0, MPI_COMM_WORLD);
+                sendcounts.data(), displs.data(), MPI_INT,
+                local_col_labels.data(), local_cols, MPI_INT,
+                0, MPI_COMM_WORLD);
 
     std::vector<float> local_matrix(num_rows * local_cols);
     for (int i = 0; i < num_rows; i++) {
         const float* src = (rank==0) ? (matrix.data()+i*num_cols) : nullptr;
         MPI_Scatterv(src, sendcounts.data(), displs.data(), MPI_FLOAT,
-                     local_matrix.data()+i*local_cols, local_cols, MPI_FLOAT,
-                     0, MPI_COMM_WORLD);
+                    local_matrix.data()+i*local_cols, local_cols, MPI_FLOAT,
+                    0, MPI_COMM_WORLD);
     }
     if (rank==0) { matrix.clear(); matrix.shrink_to_fit(); }
 
     cluster_cuda(rank, nprocs, num_rows, num_cols, local_cols,
-                 num_row_labels, num_col_labels,
-                 local_matrix.data(), row_labels.data(),
-                 local_col_labels.data(), max_iter);
+                num_row_labels, num_col_labels,
+                local_matrix.data(), row_labels.data(),
+                local_col_labels.data(), max_iter);
 
     if (rank==0) col_labels.resize(num_cols);
     MPI_Gatherv(local_col_labels.data(), local_cols, MPI_INT,

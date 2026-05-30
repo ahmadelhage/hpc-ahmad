@@ -56,9 +56,7 @@ std::vector<double> calculate_cluster_average(
 
     std::vector<double> cluster_avg(num_clusters);
     for (int i = 0; i < num_clusters; i++)
-        cluster_avg[i] = (global_count[i] > 0)
-            ? global_sum[i] / (double)global_count[i]
-            : 0.0;
+        cluster_avg[i] = (global_sum[i] / (double)global_count[i]);
     return cluster_avg;
 }
 
